@@ -1,0 +1,28 @@
+# Clean fixture #2: documentation and comment improvements only.
+# NO agent should flag anything.
+title: "Improve module docstrings"
+files:
+  - path: core/scheduler.py
+    status: modified
+    patch: |
+      @@ -1,4 +1,9 @@
+      -"""Scheduler."""
+      +"""Task scheduler.
+      +
+      +Jobs are executed at most once per interval; a missed window is skipped
+      +rather than replayed, because replaying stale jobs caused duplicate
+      +notifications (see incident 2025-11-03).
+      +"""
+       import heapq
+  - path: README.md
+    status: modified
+    patch: |
+      @@ -10,6 +10,10 @@ pip install -e .
+       ## Usage
+      +Run the scheduler with `python -m core.scheduler`. Jobs are defined in
+      +`jobs.yml`; see the comments there for the schema. The scheduler is
+      +idempotent — running two instances against the same store is safe.
+      +
+       ## License
+expected:
+  max_findings: 0

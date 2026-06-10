@@ -1,0 +1,29 @@
+# Seeded bug: leaky abstraction — the storage layer's raw row tuples and SQL
+# details leak through the service boundary into the HTTP handler.
+# The Architect agent must catch this.
+title: "Expose invoice listing over HTTP"
+files:
+  - path: web/handlers.py
+    status: modified
+    patch: |
+      @@ -5,6 +5,18 @@ from storage.invoices import InvoiceStore
+       store = InvoiceStore()
+      +
+      +
+      +def list_invoices_handler(request):
+      +    # Reach directly into the store's connection and table layout
+      +    cursor = store._conn.cursor()
+      +    cursor.execute("SELECT id, amount_cents, status_code FROM invoices_v2")
+      +    rows = cursor.fetchall()
+      +    return {
+      +        "invoices": [
+      +            {"id": r[0], "amount": r[1], "status": r[2]} for r in rows
+      +        ]
+      +    }
+expected:
+  min_findings: 1
+  findings:
+    - agent: architect
+      file: web/handlers.py
+      category_contains: ["abstraction", "coupling", "separation", "encapsulation", "layer"]
+      min_severity: medium

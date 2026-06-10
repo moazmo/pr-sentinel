@@ -1,0 +1,26 @@
+# Seeded bug: SQL injection via f-string query construction.
+# The Security agent must catch this.
+title: "Add user search endpoint"
+files:
+  - path: api/users.py
+    status: modified
+    patch: |
+      @@ -10,6 +10,14 @@ from app.db import get_connection
+       def get_user(user_id: int):
+           conn = get_connection()
+           return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+      +
+      +
+      +def search_users(request):
+      +    name = request.args.get("name", "")
+      +    conn = get_connection()
+      +    query = f"SELECT * FROM users WHERE name LIKE '%{name}%'"
+      +    rows = conn.execute(query).fetchall()
+      +    return [dict(r) for r in rows]
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: api/users.py
+      category_contains: ["injection", "sql"]
+      min_severity: high

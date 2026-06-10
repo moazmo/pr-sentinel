@@ -1,0 +1,30 @@
+# Seeded gap: new error-handling branch in money-moving code, no test changes
+# anywhere in the diff. The Test agent must catch this.
+title: "Handle insufficient balance in transfers"
+files:
+  - path: payments/transfer.py
+    status: modified
+    patch: |
+      @@ -14,8 +14,16 @@ def transfer(from_account: Account, to_account: Account, amount: int) -> Receipt:
+           if amount <= 0:
+               raise ValueError("amount must be positive")
+      -    from_account.balance -= amount
+      -    to_account.balance += amount
+      +    if from_account.balance < amount:
+      +        if from_account.overdraft_enabled:
+      +            fee = max(35_00, amount // 100)
+      +            from_account.balance -= amount + fee
+      +            to_account.balance += amount
+      +            return Receipt(status="overdraft", fee=fee)
+      +        raise InsufficientBalance(from_account.id)
+      +    else:
+      +        from_account.balance -= amount
+      +        to_account.balance += amount
+           return Receipt(status="ok", fee=0)
+expected:
+  min_findings: 1
+  findings:
+    - agent: test
+      file: payments/transfer.py
+      category_contains: ["test", "coverage", "untested"]
+      min_severity: medium

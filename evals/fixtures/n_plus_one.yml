@@ -1,0 +1,26 @@
+# Seeded bug: N+1 query — a per-item database fetch inside a loop.
+# The Performance agent must catch this.
+title: "Show order history on the dashboard"
+files:
+  - path: services/dashboard.py
+    status: modified
+    patch: |
+      @@ -22,6 +22,15 @@ from app.db import session
+       def get_recent_orders(limit: int = 50):
+           return session.query(Order).order_by(Order.created_at.desc()).limit(limit).all()
+      +
+      +
+      +def build_dashboard(user_ids: list[int]) -> list[dict]:
+      +    result = []
+      +    for user_id in user_ids:
+      +        user = session.query(User).filter(User.id == user_id).one()
+      +        orders = session.query(Order).filter(Order.user_id == user_id).all()
+      +        result.append({"user": user.name, "order_count": len(orders)})
+      +    return result
+expected:
+  min_findings: 1
+  findings:
+    - agent: performance
+      file: services/dashboard.py
+      category_contains: ["n-plus", "n+1", "query"]
+      min_severity: medium
