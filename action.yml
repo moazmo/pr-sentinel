@@ -13,7 +13,7 @@ inputs:
   api_key:
     description: >-
       Your LLM provider API key (any OpenAI-compatible provider). Pass a
-      repository secret, e.g. ${{ secrets.PR_SENTINEL_API_KEY }}.
+      repository secret named PR_SENTINEL_API_KEY via the secrets context.
     required: true
   github_token:
     description: "GitHub token used to read the PR and post the review comment."
