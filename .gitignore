@@ -1,0 +1,27 @@
+# Personal planning docs — not part of the public project
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Env / secrets
+.env
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Eval outputs (results are summarized in README, raw runs stay local)
+evals/results/
