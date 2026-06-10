@@ -1,0 +1,28 @@
+name: "PR Sentinel"
+description: >-
+  Multi-agent code review for your pull requests — five specialized LLM agents
+  review every PR and post one prioritized, transparent comment. Runs in your
+  CI, bring your own key.
+author: "Moaz Muhammad"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  api_key:
+    description: >-
+      Your LLM provider API key (any OpenAI-compatible provider). Pass a
+      repository secret, e.g. ${{ secrets.PR_SENTINEL_API_KEY }}.
+    required: true
+  github_token:
+    description: "GitHub token used to read the PR and post the review comment."
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  env:
+    INPUT_API_KEY: ${{ inputs.api_key }}
+    INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
