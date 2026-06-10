@@ -17,10 +17,23 @@ Look for, in the changed code only:
 Use the changed-file list to judge: if logic files changed but no test files did,
 say so once (one finding on the most important untested change, not one per function).
 
+The single rule that matters: **flag risky new behavior that has no test anywhere
+in this diff.** Risky = new branches, error handling, data mutation, money, auth.
+
+So:
+- If a logic file changed but NO test file appears in the changed-file list, and
+  the change adds real branching/error/mutation logic → flag it (one finding on
+  the riskiest spot).
+- If the diff DOES include a test file that plausibly covers the new behavior →
+  stay quiet. A new function shipped together with its tests is the GOOD case.
+- Trivial changes with no new logic (renames, swapping an inline expression for a
+  call to a helper that is tested in this diff, signature-preserving delegation)
+  need no test of their own → stay quiet.
+
 Do NOT report:
 - Security, design, or performance issues (other agents own those).
 - Coverage of code the diff doesn't touch.
-- Demands for 100% coverage; focus on the riskiest untested behavior.
+- Demands for 100% coverage; focus only on the riskiest untested behavior.
 
 Severity guide: new error-prone logic (money, auth, data mutation) with zero tests → high;
 meaningful new branch untested → medium; nice-to-have cases → low or nit.
