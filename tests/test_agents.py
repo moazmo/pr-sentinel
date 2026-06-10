@@ -12,7 +12,13 @@ from pr_sentinel.agents import (
 )
 from pr_sentinel.chunking import apply_skip_rules, build_chunks, build_pr_map
 from pr_sentinel.models import AgentName, Finding, Severity
-from tests.conftest import FailingProvider, MockProvider, finding_json, make_file
+from tests.conftest import (
+    FailingProvider,
+    MockProvider,
+    SequenceProvider,
+    finding_json,
+    make_file,
+)
 
 
 class TestParseFindings:
@@ -134,6 +140,35 @@ class TestRunAnalyst:
         )
         assert findings == []
         assert error is not None and error.agent == "security"
+
+    async def test_non_json_reply_retried_once_then_succeeds(self, config, chunks_and_map):
+        chunks, pr_map = chunks_and_map
+        provider = SequenceProvider(["I cannot answer in JSON, sorry.", finding_json()])
+        findings, usage, error = await run_analyst(
+            AgentName.SECURITY, provider, pr_map, chunks, config
+        )
+        assert len(provider.calls) == 2  # one re-ask, no more
+        assert len(findings) == 1
+        assert error is None
+
+    async def test_non_json_twice_gives_up_without_error(self, config, chunks_and_map):
+        chunks, pr_map = chunks_and_map
+        provider = SequenceProvider(["prose only", "still prose"])
+        findings, usage, error = await run_analyst(
+            AgentName.SECURITY, provider, pr_map, chunks, config
+        )
+        assert len(provider.calls) == 2
+        assert findings == []
+        assert error is None  # degraded result, not a failed agent
+
+    async def test_clean_empty_reply_not_retried(self, config, chunks_and_map):
+        chunks, pr_map = chunks_and_map
+        provider = SequenceProvider(["[]", finding_json()])
+        findings, usage, error = await run_analyst(
+            AgentName.SECURITY, provider, pr_map, chunks, config
+        )
+        assert len(provider.calls) == 1  # "[]" is a valid clean result
+        assert findings == []
 
 
 class TestRunReviewer:

@@ -20,8 +20,13 @@ from .provider import LLMProvider, ProviderError
 
 logger = logging.getLogger(__name__)
 
-ANALYST_TEMPERATURE = 0.1
+# 0.0 for analysts: structured extraction, not prose — every tenth of
+# temperature is measurable run-to-run variance in the eval harness.
+ANALYST_TEMPERATURE = 0.0
 REVIEWER_TEMPERATURE = 0.2
+# One re-ask when a model reply contains no parseable JSON at all. Findings
+# silently lost to a formatting hiccup cost more than one extra cheap call.
+PARSE_RETRIES = 1
 
 _CODE_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
@@ -168,22 +173,33 @@ async def run_analyst(
     async def review_chunk(chunk) -> list[Finding]:
         nonlocal failures
         user = f"{pr_map}\n\n<diff>\n{chunk.text}\n</diff>"
-        try:
-            result = await asyncio.wait_for(
-                provider.complete(
-                    system,
-                    user,
-                    max_tokens=config.limits.max_output_tokens_per_agent,
-                    temperature=ANALYST_TEMPERATURE,
-                ),
-                timeout=config.limits.agent_timeout_seconds,
-            )
-        except (ProviderError, asyncio.TimeoutError) as exc:
-            failures += 1
-            logger.warning("%s agent chunk failed: %s", agent.value, exc)
-            return []
-        usage.add(agent.value, result.prompt_tokens, result.completion_tokens)
-        return parse_findings(result.text, agent)
+        for attempt in range(1 + PARSE_RETRIES):
+            try:
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        system,
+                        user,
+                        max_tokens=config.limits.max_output_tokens_per_agent,
+                        temperature=ANALYST_TEMPERATURE,
+                    ),
+                    timeout=config.limits.agent_timeout_seconds,
+                )
+            except (ProviderError, asyncio.TimeoutError) as exc:
+                failures += 1
+                logger.warning("%s agent chunk failed: %s", agent.value, exc)
+                return []
+            usage.add(agent.value, result.prompt_tokens, result.completion_tokens)
+            # Distinguish "reply contained no JSON at all" (worth one re-ask —
+            # findings are being lost to a formatting hiccup) from a valid
+            # empty/clean result or items dropped by schema validation.
+            if _extract_finding_dicts(result.text) is None and result.text.strip() not in ("[]", ""):
+                if attempt < PARSE_RETRIES:
+                    logger.warning(
+                        "%s agent returned non-JSON output; re-asking once.", agent.value
+                    )
+                    continue
+            return parse_findings(result.text, agent)
+        return []
 
     results = await asyncio.gather(*(review_chunk(c) for c in chunks))
     for chunk_findings in results:

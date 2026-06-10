@@ -40,6 +40,21 @@ class FailingProvider:
         raise ProviderError("simulated failure")
 
 
+class SequenceProvider:
+    """Returns scripted responses in order; repeats the last one when exhausted."""
+
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.calls: list[dict] = []
+
+    async def complete(self, system, user, *, max_tokens, temperature=0.1):
+        index = min(len(self.calls), len(self.responses) - 1)
+        self.calls.append({"system": system, "user": user})
+        return CompletionResult(
+            text=self.responses[index], prompt_tokens=100, completion_tokens=50
+        )
+
+
 @pytest.fixture
 def config() -> SentinelConfig:
     return SentinelConfig()
