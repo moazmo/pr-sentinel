@@ -99,27 +99,41 @@ async def main() -> int:
     model = os.environ.get("PR_SENTINEL_MODEL", "gpt-5-mini")
     provider = OpenAICompatProvider(api_key, base_url=base_url, model=model)
 
-    rows: list[tuple[str, str, str]] = []
-    passed = 0
+    runs = 1
+    if "--runs" in sys.argv:
+        runs = max(1, int(sys.argv[sys.argv.index("--runs") + 1]))
+
     fixtures = sorted(FIXTURES_DIR.glob("*.yml"))
-    for path in fixtures:
-        fixture = load_fixture(path)
-        findings, comment = await run_fixture(provider, fixture)
-        failures = check_expectations(path.stem, fixture, findings, comment)
-        status = "✅ pass" if not failures else "❌ FAIL"
-        passed += not failures
-        detail = "; ".join(failures) if failures else f"{len(findings)} finding(s)"
-        rows.append((path.stem, status, detail))
-        print(f"[{status}] {path.stem}: {detail}")
+    # results[name] = list of failure-lists, one per run (empty list = pass)
+    results: dict[str, list[list[str]]] = {p.stem: [] for p in fixtures}
+
+    for run_index in range(1, runs + 1):
+        if runs > 1:
+            print(f"--- run {run_index}/{runs} ---")
+        for path in fixtures:
+            fixture = load_fixture(path)
+            findings, comment = await run_fixture(provider, fixture)
+            failures = check_expectations(path.stem, fixture, findings, comment)
+            results[path.stem].append(failures)
+            status = "✅ pass" if not failures else "❌ FAIL"
+            detail = "; ".join(failures) if failures else f"{len(findings)} finding(s)"
+            print(f"[{status}] {path.stem}: {detail}")
+
+    total_passes = sum(1 for runs_list in results.values() for f in runs_list if not f)
+    total_cells = len(fixtures) * runs
 
     print("\n--- README table ---\n")
-    print(f"Evals run {date.today().isoformat()} on `{model}`:\n")
-    print("| Fixture | Result | Detail |")
+    print(f"Evals: {runs} run(s) on `{model}`, {date.today().isoformat()}:\n")
+    print("| Fixture | Passed | Notes |")
     print("|---|---|---|")
-    for name, status, detail in rows:
-        print(f"| `{name}` | {status} | {detail} |")
-    print(f"\n**{passed}/{len(fixtures)} fixtures passed.**")
-    return 0 if passed == len(fixtures) else 1
+    for name, runs_list in results.items():
+        n_pass = sum(1 for f in runs_list if not f)
+        # Most common failure reason, if any — keeps the table honest and short.
+        reasons = [f[0] for f in runs_list if f]
+        note = reasons[0] if reasons else ""
+        print(f"| `{name}` | {n_pass}/{runs} | {note} |")
+    print(f"\n**{total_passes}/{total_cells} fixture-runs passed.**")
+    return 0 if total_passes == total_cells else 1
 
 
 if __name__ == "__main__":
