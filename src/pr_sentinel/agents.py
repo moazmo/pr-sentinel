@@ -23,8 +23,89 @@ logger = logging.getLogger(__name__)
 ANALYST_TEMPERATURE = 0.1
 REVIEWER_TEMPERATURE = 0.2
 
-_JSON_ARRAY = re.compile(r"\[.*\]", re.DOTALL)
-_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
+_CODE_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
+def _iter_json_structures(text: str):
+    """Yield every top-level balanced [...] or {...} substring, in order.
+
+    A balanced scan (counting brackets, skipping string literals) avoids the
+    greedy-regex trap where a stray `[` in the model's reasoning prose makes a
+    `\\[.*\\]` match span unparseable junk to the final bracket.
+    """
+    openers = {"[": "]", "{": "}"}
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch in openers:
+            depth, j, in_str, esc = 0, i, False, False
+            while j < n:
+                c = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                elif c == '"':
+                    in_str = True
+                elif c in openers:
+                    depth += 1
+                elif c in ("]", "}"):
+                    depth -= 1
+                    if depth == 0:
+                        yield text[i : j + 1]
+                        break
+                j += 1
+            i = j + 1
+        else:
+            i += 1
+
+
+def _coerce_to_dicts(parsed) -> list[dict] | None:
+    if isinstance(parsed, list):
+        return [x for x in parsed if isinstance(x, dict)]
+    if isinstance(parsed, dict):
+        inner = parsed.get("findings")
+        if isinstance(inner, list):
+            return [x for x in inner if isinstance(x, dict)]
+        if any(k in parsed for k in ("file", "message", "category")):
+            return [parsed]
+        return []
+    return None
+
+
+def _extract_finding_dicts(raw: str) -> list[dict] | None:
+    """Pull a list of finding-shaped dicts out of a model reply, tolerating the
+    formats real OpenAI-compatible models actually emit: a bare JSON array, a
+    ```json fenced block, a `{"findings": [...]}` wrapper, a single finding
+    object, or any of those buried in reasoning prose. Returns None only when
+    nothing JSON-shaped parses.
+
+    This widens *extraction*, not *acceptance*: every dict still has to validate
+    against Finding downstream, so the structured-output security boundary holds.
+    """
+    search_spaces: list[str] = []
+    fenced = _CODE_FENCE.search(raw)
+    if fenced:
+        search_spaces.append(fenced.group(1))
+    search_spaces.append(raw)
+
+    found_any = False
+    for text in search_spaces:
+        for candidate in _iter_json_structures(text):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            dicts = _coerce_to_dicts(parsed)
+            if dicts is not None:
+                found_any = True
+                if dicts:
+                    return dicts  # first non-empty structure wins
+    # An empty-but-valid structure (e.g. "[]") means "clean", not "no JSON".
+    return [] if found_any else None
 
 
 def load_prompt(name: str) -> str:
@@ -47,18 +128,11 @@ def parse_findings(raw: str, agent: AgentName) -> list[Finding]:
     valid finding object is dropped, never propagated. A model reply of `[]`
     (clean code) is success, not failure.
     """
-    match = _JSON_ARRAY.search(raw)
-    if match is None:
+    items = _extract_finding_dicts(raw)
+    if items is None:
         if raw.strip() in ("[]", ""):
             return []
         logger.warning("%s agent returned non-JSON output; discarded.", agent.value)
-        return []
-    try:
-        items = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        logger.warning("%s agent returned unparseable JSON; discarded.", agent.value)
-        return []
-    if not isinstance(items, list):
         return []
 
     findings: list[Finding] = []
@@ -173,14 +247,20 @@ async def run_reviewer(
 
 
 def _parse_reviewer_output(raw: str) -> tuple[str, list[Finding] | None]:
-    match = _JSON_OBJECT.search(raw)
-    if match is None:
-        return "", None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return "", None
-    if not isinstance(data, dict):
+    fenced = _CODE_FENCE.search(raw)
+    data = None
+    for text in ([fenced.group(1)] if fenced else []) + [raw]:
+        for candidate in _iter_json_structures(text):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and ("verdict" in parsed or "findings" in parsed):
+                data = parsed
+                break
+        if data is not None:
+            break
+    if data is None:
         return "", None
 
     verdict = str(data.get("verdict") or "")

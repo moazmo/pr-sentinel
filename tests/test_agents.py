@@ -47,6 +47,38 @@ class TestParseFindings:
         findings = parse_findings(json.dumps(items), AgentName.SECURITY)
         assert len(findings) == 1
 
+    def test_markdown_fenced_json_parses(self):
+        # Some OpenAI-compatible models wrap output in ```json fences.
+        raw = "```json\n" + finding_json() + "\n```"
+        assert len(parse_findings(raw, AgentName.SECURITY)) == 1
+
+    def test_findings_wrapper_object_parses(self):
+        # {"findings": [...]} wrapper instead of a bare array.
+        raw = json.dumps({"findings": json.loads(finding_json())})
+        assert len(parse_findings(raw, AgentName.SECURITY)) == 1
+
+    def test_single_finding_object_parses(self):
+        # A bare object instead of a one-element array.
+        raw = json.dumps(json.loads(finding_json())[0])
+        findings = parse_findings(raw, AgentName.SECURITY)
+        assert len(findings) == 1
+        assert findings[0].category == "sql-injection"
+
+    def test_reasoning_prose_with_stray_bracket_before_array(self):
+        # Regression: a stray "[" in prose used to make the greedy \[.*\] match
+        # span junk to the final bracket and fail to parse, dropping real findings.
+        raw = "Step [1]: I reviewed the diff. My findings:\n" + finding_json()
+        findings = parse_findings(raw, AgentName.SECURITY)
+        assert len(findings) == 1
+        assert findings[0].category == "sql-injection"
+
+    def test_bracket_inside_string_literal_not_miscounted(self):
+        raw = '[{"file": "a.py", "line_start": 1, "line_end": 1, "severity": "low", ' \
+              '"category": "style", "message": "array index a[0] looks off"}]'
+        findings = parse_findings(raw, AgentName.SECURITY)
+        assert len(findings) == 1
+        assert "a[0]" in findings[0].message
+
 
 class TestPromptHygiene:
     def test_every_analyst_prompt_carries_shared_rules(self):
