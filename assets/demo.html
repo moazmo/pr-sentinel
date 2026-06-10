@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR Sentinel — demo</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --link:#58a6ff; --add:#193b2d; --add-b:#2ea043;
+    --del:#3c1618; --del-b:#f85149; --crit:#f85149; --high:#db6d28;
+    --med:#d29922; --low:#58a6ff; --green:#3fb950;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    display:flex; align-items:center; justify-content:center;
+  }
+  /* fixed stage = stable recording frame */
+  .stage{width:920px; height:680px; position:relative; overflow:hidden; padding:24px}
+  .scene{position:absolute; inset:24px; opacity:0}
+
+  /* ---- Scene 1: the diff with the planted bug ---- */
+  #diff{animation:s1 16s infinite}
+  .filehdr{
+    background:var(--panel); border:1px solid var(--border); border-bottom:0;
+    border-radius:6px 6px 0 0; padding:8px 14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12.5px; color:var(--muted);
+  }
+  .diff{
+    background:var(--panel); border:1px solid var(--border); border-radius:0 0 6px 6px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; overflow:hidden;
+  }
+  .ln{padding:1px 14px; white-space:pre; display:block}
+  .ctx{color:var(--muted)}
+  .add{background:var(--add); border-left:3px solid var(--add-b)}
+  .del{background:var(--del); border-left:3px solid var(--del-b)}
+  .bug{background:var(--del); border-left:3px solid var(--del-b); position:relative}
+  .tag{
+    position:absolute; right:14px; top:50%; transform:translateY(-50%);
+    background:var(--crit); color:#fff; font:600 11px/1 sans-serif; padding:4px 8px;
+    border-radius:10px; opacity:0; animation:bugtag 16s infinite;
+  }
+  .title{font-size:20px; font-weight:600; margin:0 0 4px}
+  .sub{color:var(--muted); margin:0 0 18px; font-size:13px}
+  .sub .num{color:var(--text)}
+
+  /* ---- Scene 2: agents running ---- */
+  #run{animation:s2 16s infinite}
+  .runwrap{display:flex; flex-direction:column; gap:14px; height:100%; justify-content:center; align-items:center}
+  .spin{
+    width:34px;height:34px;border:3px solid var(--border);border-top-color:var(--green);
+    border-radius:50%; animation:spin 1s linear infinite;
+  }
+  .agents{display:flex; gap:10px; flex-wrap:wrap; justify-content:center; max-width:560px}
+  .chip{
+    border:1px solid var(--border); background:var(--panel); border-radius:20px;
+    padding:7px 14px; font-size:13px; opacity:.35; animation:chip 16s infinite;
+  }
+  .chip b{color:var(--green)}
+
+  /* ---- Scene 3: the posted review ---- */
+  #review{animation:s3 16s infinite}
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:6px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .chead{display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--border)}
+  .ava{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#1f6feb,#3fb950);
+       display:grid;place-items:center;font-size:15px}
+  .cbody{padding:14px 18px; overflow:hidden}
+  h2.r{font-size:17px;margin:0 0 6px}
+  .verdict{margin:2px 0 14px; padding:8px 12px; border-left:3px solid var(--green);
+           background:#13241c; color:#c9d1d9; font-size:13px; border-radius:0 4px 4px 0}
+  .sev{font-weight:600; margin:14px 0 6px; font-size:13.5px}
+  .sev.c{color:var(--crit)} .sev.h{color:var(--high)} .sev.m{color:var(--med)} .sev.l{color:var(--low)}
+  .find{
+    border:1px solid var(--border); border-radius:6px; padding:9px 12px; margin:0 0 8px;
+    font-size:13px; opacity:0; transform:translateY(6px);
+  }
+  .loc{font-family:ui-monospace,monospace; color:var(--link); font-size:12.5px}
+  .who{display:inline-block; background:#21262d; color:#adbac7; border-radius:4px;
+       padding:1px 7px; font-size:11.5px; margin-left:6px}
+  #f1{animation:pop 16s infinite} #f2{animation:pop 16s infinite .25s}
+  #f3{animation:pop 16s infinite .5s} #f4{animation:pop 16s infinite .75s}
+  .foot{margin-top:6px; color:var(--muted); font-size:12px; border-top:1px solid var(--border); padding-top:8px}
+  .foot b{color:var(--green)}
+
+  @keyframes spin{to{transform:rotate(360deg)}}
+  /* 16s loop: diff 0-22%, run 22-34%, review 34-100% */
+  @keyframes s1{0%,2%{opacity:1} 22%,100%{opacity:0}}
+  @keyframes bugtag{0%,6%{opacity:0} 10%,21%{opacity:1} 23%,100%{opacity:0}}
+  @keyframes s2{0%,21%{opacity:0} 24%,33%{opacity:1} 35%,100%{opacity:0}}
+  @keyframes chip{
+    0%,24%{opacity:.35} 27%{opacity:1} 33%{opacity:1} 35%,100%{opacity:.35}
+  }
+  @keyframes s3{0%,33%{opacity:0} 36%,98%{opacity:1} 100%{opacity:0}}
+  @keyframes pop{
+    0%,38%{opacity:0; transform:translateY(6px)}
+    44%,96%{opacity:1; transform:translateY(0)}
+    100%{opacity:1}
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- Scene 1: the PR diff -->
+  <div class="scene" id="diff">
+    <p class="title">Add user search and order history endpoints <span style="color:var(--muted)">#1</span></p>
+    <p class="sub"><span class="num">1</span> file changed &nbsp;·&nbsp; <span style="color:var(--green)">+24</span></p>
+    <div class="filehdr">api/users.py</div>
+    <div class="diff">
+      <span class="ln ctx">  def search_users(request):</span>
+      <span class="ln add">+     name = request.args.get("name", "")</span>
+      <span class="ln add">+     conn = get_connection()</span>
+      <span class="ln bug">+     query = f"SELECT * FROM users WHERE name LIKE '%{name}%'"<span class="tag">⚠ SQL injection</span></span>
+      <span class="ln add">+     rows = conn.execute(query).fetchall()</span>
+      <span class="ln ctx"> </span>
+      <span class="ln ctx">  def get_user_orders(user_ids):</span>
+      <span class="ln add">+     for user_id in user_ids:</span>
+      <span class="ln add">+         orders = conn.execute(</span>
+      <span class="ln add">+             "SELECT * FROM orders WHERE user_id = ?", (user_id,)</span>
+      <span class="ln add">+         ).fetchall()</span>
+    </div>
+  </div>
+
+  <!-- Scene 2: agents running -->
+  <div class="scene" id="run">
+    <div class="runwrap">
+      <div class="spin"></div>
+      <div style="font-size:15px;color:var(--muted)">PR Sentinel reviewing the diff…</div>
+      <div class="agents">
+        <span class="chip">🏛️ Architect</span>
+        <span class="chip">🔒 Security</span>
+        <span class="chip">⚡ Performance</span>
+        <span class="chip">🧪 Test</span>
+        <span class="chip">🧠 Reviewer</span>
+      </div>
+      <div style="color:var(--muted);font-size:12.5px">5 agents · in parallel · your key, your CI</div>
+    </div>
+  </div>
+
+  <!-- Scene 3: the posted review (verbatim from the real run) -->
+  <div class="scene" id="review">
+    <div class="card">
+      <div class="chead"><span class="ava">🛡️</span><b>PR Sentinel</b>
+        <span style="color:var(--muted)">commented · now</span></div>
+      <div class="cbody">
+        <h2 class="r">🛡️ PR Sentinel Review</h2>
+        <div style="font-size:13px;color:var(--muted)"><b style="color:var(--text)">4 findings</b> (1 Critical, 1 High, 1 Medium, 1 Low) · 5/5 agents completed</div>
+        <div class="verdict">The new endpoints have a critical SQL injection flaw, two performance issues, and missing tests.</div>
+
+        <div class="sev c">🔴 Critical (1)</div>
+        <div class="find" id="f1">
+          <span class="loc">api/users.py:14-15</span><span class="who">Security + Test</span><br>
+          Builds a SQL query with f-string interpolation of unsanitized <code>request.args</code> input — arbitrary SQL injection.
+        </div>
+
+        <div class="sev h">🟠 High (1)</div>
+        <div class="find" id="f2">
+          <span class="loc">api/users.py:20-23</span><span class="who">Performance</span><br>
+          A separate query per <code>user_id</code> inside the loop — N+1 round trips.
+        </div>
+
+        <div class="sev m">🟡 Medium (1)</div>
+        <div class="find" id="f3">
+          <span class="loc">api/users.py:15</span><span class="who">Performance</span><br>
+          Returns all matching rows with no limit — unbounded result set.
+        </div>
+
+        <div class="sev l">🔵 Low (1)</div>
+        <div class="find" id="f4">
+          <span class="loc">api/users.py:9-23</span><span class="who">Test</span><br>
+          New functions lack tests for typical usage, empty inputs, and error paths.
+        </div>
+
+        <div class="foot">5 agents · ~14.2k tokens (<b>≈$0.019</b> on deepseek-v4-pro) · one sticky comment · BYOK</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
