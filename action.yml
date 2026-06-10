@@ -22,7 +22,7 @@ inputs:
 
 runs:
   using: "docker"
-  image: "Dockerfile"
+  image: "docker://ghcr.io/moazmo/pr-sentinel:v1.0.2"
   env:
     INPUT_API_KEY: ${{ inputs.api_key }}
     INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
