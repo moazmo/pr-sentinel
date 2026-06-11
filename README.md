@@ -30,7 +30,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: moazmo/pr-sentinel@v1
+      - uses: moazmo/pr-sentinel@v2
         with:
           api_key: ${{ secrets.PR_SENTINEL_API_KEY }}
 ```
