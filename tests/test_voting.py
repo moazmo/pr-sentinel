@@ -96,6 +96,16 @@ class TestVerifier:
         )
         assert len(kept) == 1 and err is not None
 
+    async def test_unparseable_then_valid_retries_once(self):
+        from tests.conftest import SequenceProvider
+
+        resp = json.dumps({"verdicts": [{"id": 0, "verdict": "confirm"}]})
+        provider = SequenceProvider(["not json at all", resp])
+        kept, usage, err = await run_verifier(
+            provider, "map", self._findings(), self._files(), SentinelConfig()
+        )
+        assert len(provider.calls) == 2 and err is None and len(kept) == 1
+
     async def test_empty_findings_no_call(self):
         provider = MockProvider()
         kept, usage, err = await run_verifier(

@@ -374,25 +374,31 @@ async def run_verifier(
         },
     }
     user = "<verification_input>\n" + json.dumps(payload, indent=1) + "\n</verification_input>"
-    try:
-        result = await asyncio.wait_for(
-            provider.complete(
-                load_prompt("verifier"),
-                user,
-                max_tokens=config.limits.max_output_tokens_per_agent,
-                temperature=VERIFIER_TEMPERATURE,
-                model=config.provider.resolved_review_model,
-                json_mode=True,
-            ),
-            timeout=config.limits.agent_timeout_seconds,
-        )
-    except (ProviderError, asyncio.TimeoutError) as exc:
-        logger.warning("Verifier failed (%s); findings pass through unadjudicated.", exc)
-        return findings, usage, AgentError(agent="verifier", message=str(exc))
-    usage.add("verifier", result.prompt_tokens, result.completion_tokens,
-              cached=result.cached_tokens)
+    verdicts = None
+    for attempt in range(1 + PARSE_RETRIES):
+        try:
+            result = await asyncio.wait_for(
+                provider.complete(
+                    load_prompt("verifier"),
+                    user,
+                    max_tokens=config.limits.max_output_tokens_per_agent,
+                    temperature=VERIFIER_TEMPERATURE,
+                    model=config.provider.resolved_review_model,
+                    json_mode=True,
+                ),
+                timeout=config.limits.agent_timeout_seconds,
+            )
+        except (ProviderError, asyncio.TimeoutError) as exc:
+            logger.warning("Verifier failed (%s); findings pass through unadjudicated.", exc)
+            return findings, usage, AgentError(agent="verifier", message=str(exc))
+        usage.add("verifier", result.prompt_tokens, result.completion_tokens,
+                  cached=result.cached_tokens)
+        verdicts = _parse_verifier_output(result.text)
+        if verdicts is None and attempt < PARSE_RETRIES:
+            logger.warning("Verifier output unparseable; re-asking once.")
+            continue
+        break
 
-    verdicts = _parse_verifier_output(result.text)
     if verdicts is None:
         logger.warning("Verifier output unparseable; findings pass through unadjudicated.")
         return findings, usage, AgentError(
