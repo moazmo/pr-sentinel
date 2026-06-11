@@ -56,12 +56,16 @@ class TestChunking:
         assert len(chunks) == 1
         assert len(chunks[0].files) == 3
 
-    def test_large_file_goes_alone(self, config):
+    def test_large_file_truncated_small_file_not(self, config):
         config.limits.tokens_per_call = 200
         big = make_file(path="big.py", patch="@@ -1 +1 @@\n" + "+line\n" * 150)
-        files = apply_skip_rules([make_file(path="small.py"), big], config)
+        small = make_file(path="small.py")
+        files = apply_skip_rules([small, big], config)
         chunks = build_chunks(files, config)
-        assert len(chunks) == 2
+        assert chunks  # something was produced
+        assert big.truncated and not small.truncated
+        # Every chunk fits the per-call budget.
+        assert all(c.est_tokens <= config.limits.tokens_per_call for c in chunks)
 
     def test_oversized_file_truncated_with_disclosure(self, config):
         config.limits.tokens_per_call = 100

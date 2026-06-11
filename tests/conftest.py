@@ -14,16 +14,18 @@ from pr_sentinel.provider import CompletionResult
 class MockProvider:
     """Canned-response LLM provider. Responses are matched by a substring of
     the system prompt (each agent's prompt names the agent), so one mock can
-    serve all five agents in an integration test."""
+    serve all six agents in an integration test."""
 
     def __init__(self, responses: dict[str, str] | None = None, default: str = "[]") -> None:
         self.responses = responses or {}
         self.default = default
         self.calls: list[dict] = []
 
-    async def complete(self, system, user, *, max_tokens, temperature=0.1):
+    async def complete(self, system, user, *, max_tokens, temperature=0.1,
+                       model=None, json_mode=False):
         self.calls.append(
-            {"system": system, "user": user, "max_tokens": max_tokens, "temperature": temperature}
+            {"system": system, "user": user, "max_tokens": max_tokens,
+             "temperature": temperature, "model": model, "json_mode": json_mode}
         )
         text = self.default
         for needle, response in self.responses.items():
@@ -34,7 +36,8 @@ class MockProvider:
 
 
 class FailingProvider:
-    async def complete(self, system, user, *, max_tokens, temperature=0.1):
+    async def complete(self, system, user, *, max_tokens, temperature=0.1,
+                       model=None, json_mode=False):
         from pr_sentinel.provider import ProviderError
 
         raise ProviderError("simulated failure")
@@ -47,7 +50,8 @@ class SequenceProvider:
         self.responses = responses
         self.calls: list[dict] = []
 
-    async def complete(self, system, user, *, max_tokens, temperature=0.1):
+    async def complete(self, system, user, *, max_tokens, temperature=0.1,
+                       model=None, json_mode=False):
         index = min(len(self.calls), len(self.responses) - 1)
         self.calls.append({"system": system, "user": user})
         return CompletionResult(
@@ -65,19 +69,40 @@ def pr() -> PRMetadata:
     return PRMetadata(repo="octo/demo", number=7, title="Add user lookup", base_ref="main")
 
 
-def make_file(path: str = "app.py", patch: str | None = "@@ -1,2 +1,4 @@\n+x = 1\n") -> ChangedFile:
+# A realistic added line so evidence anchoring (which ignores ultra-short
+# evidence) keeps findings that quote it.
+_DEFAULT_LINE = 'query = f"SELECT * FROM users WHERE id = {uid}"'
+_UNSET = object()
+
+
+def make_file(path: str = "app.py", patch=_UNSET) -> ChangedFile:
+    """patch defaults to a realistic one-line diff; pass patch=None explicitly
+    for a binary/no-patch file."""
+    if patch is _UNSET:
+        patch = f"@@ -1,2 +1,4 @@\n+{_DEFAULT_LINE}\n"
     return ChangedFile(path=path, status="modified", additions=2, deletions=0, patch=patch)
 
 
 def finding_json(**overrides) -> str:
     base = {
         "file": "app.py",
-        "line_start": 3,
-        "line_end": 3,
+        "line_start": 1,
+        "line_end": 1,
         "severity": "high",
         "category": "sql-injection",
         "message": "Query built from user input.",
+        # Matches make_file's added line so evidence anchoring keeps it.
+        "evidence": _DEFAULT_LINE,
         "suggestion": "Use parameterized queries.",
     }
     base.update(overrides)
     return json.dumps([base])
+
+
+def single_sample_config() -> SentinelConfig:
+    """Config with the V2 ensemble collapsed to one sample — for tests that
+    count provider calls or assert single-shot behavior."""
+    config = SentinelConfig()
+    config.accuracy.samples = 1
+    config.accuracy.min_support = 1
+    return config

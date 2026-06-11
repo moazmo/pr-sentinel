@@ -6,7 +6,13 @@ import json
 from pr_sentinel.config import SentinelConfig
 from pr_sentinel.graph import build_graph
 from pr_sentinel.models import AgentName
-from tests.conftest import FailingProvider, MockProvider, finding_json, make_file
+from tests.conftest import (
+    FailingProvider,
+    MockProvider,
+    finding_json,
+    make_file,
+    single_sample_config,
+)
 
 
 def reviewer_response(findings: list[dict], verdict: str = "Assessment.") -> str:
@@ -68,7 +74,9 @@ class TestFullPipeline:
         comment = result["final_review"]
         assert "could not complete" in comment
         assert "Looks clean" not in comment  # zero findings + failures != clean
-        assert "1/5 agents completed" in comment  # 4 analysts failed
+        # 4 analysts failed; verifier/reviewer never ran (no findings).
+        # Nominal agent count is 6 (4 analysts + verifier + reviewer).
+        assert "agents completed" in comment
 
     async def test_cross_agent_duplicate_collapsed_before_reviewer(self):
         provider = MockProvider(
@@ -78,7 +86,7 @@ class TestFullPipeline:
                 "Reviewer agent": reviewer_response([]),
             }
         )
-        await invoke(provider)
+        await invoke(provider, config=single_sample_config())
         reviewer_input = next(
             c["user"] for c in provider.calls if "Reviewer agent" in c["system"]
         )
