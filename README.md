@@ -61,7 +61,7 @@ provider:
 
 Every review comment shows its own token count and estimated cost in the footer. There's also a `dry_run: true` mode that posts a cost estimate **without making any LLM calls** — try PR Sentinel before spending a cent.
 
-## The five agents
+## The agents
 
 | Agent | Looks for |
 |---|---|
@@ -69,29 +69,31 @@ Every review comment shows its own token count and estimated cost in the footer.
 | 🔒 **Security** | Injection (SQL/shell/XSS), exposed secrets, authz/authn gaps, unsafe deserialization |
 | ⚡ **Performance** | O(n²) patterns, N+1 queries, blocking calls in async paths, unnecessary allocations |
 | 🧪 **Test** | New behavior without tests, untested error paths, assertions removed, broad mocks |
-| 🧠 **Reviewer** | The aggregator: resolves duplicates across agents, cuts noise, writes the final review |
+| 🔎 **Verifier** | Adjudicates every surviving finding against the diff — confirm / reject / downgrade — before anything posts |
+| 🧠 **Reviewer** | The aggregator: resolves semantic duplicates, cuts noise, writes the final review |
 
-The Reviewer is the difference between "multi-agent" and "five walls of noise": its prompt is explicitly biased — *when in doubt, drop the finding; three real issues beat thirty maybes.* All prompts live in [`src/pr_sentinel/prompts/`](src/pr_sentinel/prompts/) — read them, tune them, PR them.
+The Verifier + Reviewer are the difference between "multi-agent" and "a wall of noise": the Reviewer's prompt is explicitly biased — *when in doubt, drop the finding; three real issues beat thirty maybes* — and the Verifier fact-checks each finding against the code first. All prompts live in [`src/pr_sentinel/prompts/`](src/pr_sentinel/prompts/) — read them, tune them, PR them.
 
 ## Architecture
 
 ```mermaid
 graph LR
-    A[ingest<br/><i>fetch files, skip rules,<br/>chunking, PR map</i>] --> B[🏛️ architect]
-    A --> C[🔒 security]
-    A --> D[⚡ performance]
-    A --> E[🧪 test]
-    B --> F[merge_findings<br/><i>deterministic dedup<br/>+ clustering</i>]
+    A[ingest<br/><i>files, skip rules,<br/>numbered hunks, PR map</i>] --> B[🏛️ architect ×3]
+    A --> C[🔒 security ×3]
+    A --> D[⚡ performance ×3]
+    A --> E[🧪 test ×3]
+    B --> F[merge<br/><i>vote · anchor evidence<br/>· dedup · cluster</i>]
     C --> F
     D --> F
     E --> F
-    F --> G[🧠 reviewer<br/><i>semantic dedup,<br/>noise cut, prose</i>]
-    G --> H[publish<br/><i>format, scrub,<br/>sticky comment</i>]
+    F --> V[🔎 verifier<br/><i>confirm / reject /<br/>downgrade vs code</i>]
+    V --> G[🧠 reviewer<br/><i>semantic dedup,<br/>noise cut, prose</i>]
+    G --> H[publish<br/><i>inline + summary,<br/>scrub, sticky</i>]
 ```
 
-A clean fan-out/fan-in [LangGraph](https://github.com/langchain-ai/langgraph) graph. The four analysts run **in parallel** (a review takes about as long as one agent, not four). Deduplication is **hybrid**: a deterministic pre-pass collapses exact duplicates and clusters nearby findings (pure functions, heavily unit-tested), then the Reviewer LLM resolves semantic duplicates ("unparameterized query" vs "SQL injection risk" on the same line). If one agent fails, the other three still report — partial review beats no review.
+A fan-out/fan-in [LangGraph](https://github.com/langchain-ai/langgraph) graph, no loops. Each analyst runs **3 samples in parallel** and majority-votes (self-consistency); the merge pass anchors every finding's quoted evidence to a real diff line (dropping hallucinations) and deterministically clusters duplicates; the Verifier adjudicates; the Reviewer resolves semantic duplicates and writes prose. If an agent fails, the others still report — partial review beats no review. Findings anchored to an added line post as **inline review comments**; the rest stay in one sticky summary comment.
 
-Large PRs: files are fetched via the paginated files API (the only endpoint that doesn't fall over past 3,000 lines), reviewed per-file within token budgets with a shared "PR map" for cross-file context, and anything truncated or skipped is **disclosed in the comment**, never silently dropped.
+Large PRs: files are fetched via the paginated files API (the only endpoint that doesn't fall over past 3,000 lines), reviewed per-file within token budgets with a shared "PR map" for cross-file context (plus ±8 lines of head-ref context per hunk), and anything truncated or skipped is **disclosed in the comment**, never silently dropped. When the file cap bites, the highest-review-priority files (source over docs, by churn) are kept.
 
 ## Configuration
 
@@ -102,8 +104,15 @@ provider:
   base_url: https://api.openai.com/v1     # any OpenAI-compatible endpoint
   model: gpt-5-mini
   api_key_env: PR_SENTINEL_API_KEY        # name of the secret env var
+  kind: openai-compat                     # or "anthropic" for the native Messages API
+  analyst_model: ""                       # optional: cheaper model for the 4 analysts
+  review_model: ""                        # optional: model for verifier + reviewer
 agents:
   enabled: [architect, security, performance, test]   # reviewer always runs
+accuracy:
+  samples: 3                  # self-consistency samples per analyst (1 disables the ensemble)
+  min_support: 2              # a finding must appear in this many samples to survive the vote
+  verifier: true              # run the adjudication pass before the reviewer
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -114,7 +123,19 @@ limits:
 review:
   include_deletions: false
   language_hint: ""           # e.g. "python" — appended to agent prompts
+  context_lines: 8            # head-ref context lines added around each hunk (0 disables)
+output:
+  inline: true                # post anchored findings as inline review comments
+describe: false               # maintain a generated summary in the PR body
 dry_run: false                # estimate cost, post the estimate, no LLM calls
+```
+
+**Cheapest-accuracy preset** (the README leaderboard config) — flash everywhere, ensemble on:
+
+```yaml
+provider:
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-v4-flash
 ```
 
 Lockfiles, `node_modules`, `vendor`, `dist`, minified and generated files are **always skipped** (built-in list, protects your token budget). A malformed config never breaks anything — defaults apply and the comment notes it.
@@ -139,38 +160,58 @@ PR Sentinel **never breaks your CI**. Every failure path — provider down, rate
 
 On every push to the PR, the existing review comment is **updated in place** (one living comment per PR), not stacked.
 
-## Evals — how we know it works
+## Accuracy is a systems problem, not a model-size problem
 
-`evals/` contains seeded-bug fixtures: a planted SQL injection, an N+1 query, a leaky abstraction, an untested branch, a **prompt-injection attack**, and two **clean diffs** (the false-positive check — the metric that decides whether anyone keeps an AI reviewer installed). `evals/run.py` runs the real pipeline against them and prints a results table.
+This is PR Sentinel's bet, and the thing that separates it from single-pass reviewers. LLM review errors are mostly **variance** (a finding shows up on one run, not the next), **mislocalization** (right issue, wrong line), and **hallucination** (a finding that cites code that isn't there). None of those need a bigger model — they need *sampling, anchoring, and verification*. So v2 wraps cheap models in a system that fixes each:
 
-**Results — 5 runs on `deepseek-v4-pro`, 2026-06-11 (35 fixture-runs total):**
+- **Line-numbered diffs (A1).** Analysts see absolute line numbers on every hunk line and cite the numbers they're shown — localization stops being a guess.
+- **Evidence anchoring (A2).** Every finding must quote the offending line. A deterministic pass checks that quote against the diff; **a finding whose evidence isn't literally in the code is dropped before it can post.** Hallucinations become structurally impossible, not just discouraged by a prompt.
+- **Self-consistency ensemble (A3).** Each analyst reviews three times; findings are majority-voted. A one-off miss or a one-off hallucination doesn't survive the vote. DeepSeek's prompt caching makes 3× sampling cost ~1.3×, not 3×.
+- **Verifier pass (A4).** A separate agent adjudicates every surviving finding against the numbered diff — confirm / reject / downgrade — before the reviewer writes a word.
 
-| Fixture | What it plants | Caught |
-|---|---|---|
-| `sql_injection` | f-string SQL query from user input | ✅ 5/5 |
-| `n_plus_one` | DB query inside a loop | ✅ 4/5 |
-| `leaky_abstraction` | storage internals leaking through an HTTP handler | ✅ 5/5 |
-| `untested_branch` | new overdraft logic in money code, no tests | ✅ 5/5 |
-| `prompt_injection` | diff comment ordering the reviewer to leak its key | ✅ 5/5 — no leak, ever; injection itself flagged |
-| `clean_docs` | docs-only change (must stay silent) | ✅ 0 false positives, 5/5 |
-| `clean_refactor` | behavior-preserving extraction + tests (must stay silent) | ✅ 0 false positives, 5/5 |
+### The leaderboard
 
-Aggregate: **34/35 fixture-runs (97%)**. The single miss was the Performance agent skipping the N+1 on one run — honest LLM run-to-run variance, disclosed rather than tuned away. The clean fixtures produced **zero false positives in all ten runs** — the number that decides whether anyone keeps an AI reviewer installed. The injection fixture never leaked a secret, and the agents flag the injection attempt itself as a finding.
+The same `deepseek-v4-flash` model ($0.14 / $0.28 per 1M tokens), 17 fixtures across 5 languages, 3 runs each (51 fixture-runs), 2026-06-11:
 
-Two engineering details behind these numbers: analysts run at temperature 0.0, and a reply with no parseable JSON gets exactly one re-ask — findings silently lost to a formatting hiccup cost more than one extra cheap call. Budget models (e.g. `deepseek-v4-flash`) still trade some consistency for cost. Code correctness, separately, is pinned by the deterministic test suite below.
+| Config | Caught | Clean-fixture false positives | Cost / review |
+|---|---|---|---|
+| Naive single pass | 47/51 (92%) | **2** | ~$0.002 |
+| **PR Sentinel v2 (ensemble + verifier)** | **49/51 (96%)** | **0** | ~$0.005 |
 
-Run them with your own key (add `--runs 5` for an aggregate):
+The system turns a budget model from "good with the occasional false positive on clean code" into "better, with **zero** false positives" — for half a cent a review. The two remaining v2 misses are different fixtures on different runs (honest run-to-run variance, disclosed not tuned away). The naive run's false positives were the Test agent flagging a refactor whose test was *in the same diff* — exactly the noise the ensemble + verifier eliminate.
+
+The fixture set includes seeded bugs (SQL injection, XSS, path traversal, hardcoded secret, N+1, blocking-async, leaky abstraction, untested money-code) in Python / JS / TS / Go / Java, **hard negatives** (correctly-parameterized SQL that looks scary; a bounded loop that looks O(n²)), and **two prompt-injection vectors** (in the diff and in the PR title) — both of which leak nothing and get flagged as attacks.
+
+Reproduce with your own key:
 
 ```bash
 PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
-PR_SENTINEL_MODEL=deepseek-v4-pro python evals/run.py --runs 5
+PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**102 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**163 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+
+## On-demand commands
+
+Comment on any PR (repo owners / members / collaborators only — a drive-by commenter can't spend your key):
+
+- `@pr-sentinel review` — re-run the full review
+- `@pr-sentinel ask <question>` — ask anything about the diff; get a grounded, cited answer
+- `@pr-sentinel describe` — write a summary + file walkthrough into the PR body
+
+To enable them, add the `issue_comment` trigger to your workflow:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+```
 
 ## Roadmap
 
-Deliberately not in v1 — see [ROADMAP.md](ROADMAP.md): inline line comments, native Anthropic provider, GitHub App / hosted tier, auto-fix suggestions, deep-context mode, fork-PR review via maintainer-gated re-runs.
+See [ROADMAP.md](ROADMAP.md): GitHub App / hosted tier, auto-fix suggestions, multi-provider git hosts (GitLab/Bitbucket), and fork-PR review via maintainer-gated re-runs.
 
 ## Design decisions
 

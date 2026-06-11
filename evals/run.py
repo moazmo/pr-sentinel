@@ -78,6 +78,10 @@ def config_from_env() -> SentinelConfig:
     """Build the run config from env knobs so the leaderboard can compare
     strategies (single pass vs ensemble+verifier) without code changes."""
     config = SentinelConfig()
+    # The per-call model override uses provider.model; keep it in sync with the
+    # client's model (PR_SENTINEL_MODEL) or analyst calls get the wrong id.
+    config.provider.model = os.environ.get("PR_SENTINEL_MODEL", config.provider.model)
+    config.provider.base_url = os.environ.get("PR_SENTINEL_BASE_URL", config.provider.base_url)
     config.accuracy.samples = int(os.environ.get("PR_SENTINEL_SAMPLES", "3"))
     config.accuracy.verifier = os.environ.get("PR_SENTINEL_VERIFIER", "true").lower() != "false"
     if config.accuracy.samples == 1:

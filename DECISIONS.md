@@ -53,3 +53,41 @@ Tag `v1.0.0` → release workflow builds + pushes the image (the only path that 
 ## Security posture (decided up front, not retrofitted)
 
 `pull_request` trigger only; minimal permissions; all PR-derived text treated as untrusted data inside delimited blocks; structured output as an injection boundary; secrets confined to the HTTP client layer with output scrubbing as defense-in-depth; config from the base branch; fork PRs skipped gracefully. Decided before the first line of code because the insecure path is the easy path and must never be the development default. Details and the 2026 incident receipts: [SECURITY.md](SECURITY.md).
+
+---
+
+# V2 decisions (accuracy-per-dollar)
+
+V2's thesis: review accuracy is a *systems* problem, not a model-size problem. LLM review errors are variance, mislocalization, and hallucination — so the architecture attacks each with a system-level countermeasure, on cheap models, with published numbers. pr-agent (the established OSS competitor) is single-LLM-call-per-tool by design and structurally can't follow.
+
+## D13 — Line-numbered diff decoration
+
+Analysts receive hunks with absolute new-file line numbers on every reviewable line (`diffmap.render_numbered`) and are told to cite the numbers shown, not infer them. Localization stops being a guess; it's the prerequisite for evidence anchoring (D14) and inline comments (D17). Deterministic, no LLM. Rejected: leaving raw `@@` headers (model miscounts on multi-hunk files).
+
+## D14 — Evidence anchoring (the hallucination killer)
+
+Every finding must quote the offending line in an `evidence` field. A pure-function pass (`verification.anchor_findings`) checks that quote against the diff's line map: match near the claimed range → keep and snap the range to the real location; match elsewhere in the file → keep and move it there; no match anywhere → drop. Hallucinated findings become *structurally unpostable*, not merely discouraged by prompt. This widens nothing on the security side — it only ever removes findings. Nobody else in the category does this.
+
+## D15 — Self-consistency ensemble
+
+Each analyst reviews each chunk K times (default 3) at a higher temperature, and `merge.vote_findings` majority-votes: a finding kept if seen in ≥`min_support` samples, OR if it's high/critical (those go to anchoring + the verifier rather than dying on a vote). This converts run-to-run variance — the dominant cheap-model failure mode, measured in v1 — into signal, and simultaneously crushes false positives (a hallucination must now *repeat* AND carry verifiable evidence). DeepSeek's cached-input pricing makes K samples cost ~1.3×, not K×, because the shared system+PR-map prefix is cache-priced after the first sample. Rejected: a single sample (v1 behavior — the source of the variance).
+
+## D16 — Verifier adjudication pass
+
+A dedicated node between merge and reviewer (`agents.run_verifier`) makes one batched call that confirms/rejects/downgrades each surviving finding against the numbered diff, then the reviewer writes prose only over adjudicated findings. Distinct role from the reviewer: reviewer = dedupe/prioritize/communicate; verifier = fact-check against code. Fail-open: any verifier failure passes findings through unadjudicated (a missing adjudication beats a missing review). Default on; one flag off.
+
+## D17 — Inline review comments
+
+Findings anchored to a verified added line (D13/D14) post as a GitHub Review with per-line comments (`github_client.create_inline_review`); the rest stay in the sticky summary, which keeps the verdict, an inline index, the footer, and disclosures. Inline failure falls back to putting everything in the summary (fail-open). Re-checked against the deterministic added-line set at publish time so a reviewer-mangled line number can't anchor a comment to the wrong code. Rejected for v1 (scope); the single most-visible UX gap vs every competitor.
+
+## D18 — Two-tier model routing + structured output + native Anthropic
+
+`provider.analyst_model` / `review_model` let the cheap model do the bulk analyst sampling while a (still cheap) model verifies/reviews — both default to `model`. The provider sends `response_format: json_object` and remembers a 400 to fall back bare (so DeepSeek/OpenAI get guaranteed JSON, Ollama still works). One pooled httpx client per provider (no per-call TLS handshake). A native `AnthropicProvider` (Messages API, ~70 LOC, no SDK) fulfils the oldest roadmap promise behind the same Protocol. Cached-token counts surface in the cost footer.
+
+## D19 — Comment commands (`@pr-sentinel review|ask|describe`)
+
+The action also handles `issue_comment` events. `review` re-runs the pipeline; `ask <q>` answers a question about the diff in one call; `describe` writes a summary into the PR body between markers. Hard gate: the commenter's `author_association` must be OWNER/MEMBER/COLLABORATOR — a drive-by commenter must not be able to spend the repo owner's API budget (the economic-DoS rule, extended to the comment surface). Command text is never echoed into privileged context.
+
+## D20 — Published model × strategy leaderboard
+
+The eval harness (`evals/run.py`) runs configurable strategies (samples, verifier, models via env) over a 17-fixture, 5-language set with hard negatives, and prints a labelled, cost-annotated table. The headline artifact: the same $0.14/M model goes from a naive single pass to the ensemble+verifier system, measured, with false-positive rates published. Honest numbers whatever they say — fixtures are never tuned to pass.

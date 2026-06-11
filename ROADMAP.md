@@ -1,23 +1,31 @@
 # Roadmap
 
-v1 is deliberately scoped: a shipped five-agent reviewer with one provider done excellently beats a half-built one with three providers and a dashboard. Everything below is deferred **on purpose**.
+Scoped deliberately. v1 shipped a five-agent reviewer; **v2 shipped the accuracy-per-dollar core** (line-numbered diffs, evidence anchoring, self-consistency ensemble, verifier pass, inline comments, `@pr-sentinel` commands, native Anthropic provider, a 17-fixture / 5-language eval leaderboard). Everything below is deferred **on purpose**.
 
-## Next (fast follows)
+## Shipped in v2 (no longer roadmap)
 
-- **Native Anthropic provider** — a clean drop-in behind the existing `LLMProvider` protocol (Anthropic models are already reachable today via OpenRouter).
-- **Inline line-by-line comments** — post findings as PR review comments anchored to the diff, with the summary comment as the index.
-- **Injection-aware Security agent tuning** — keep improving the "the reviewer catches people trying to jailbreak the reviewer" behavior measured by the injection eval fixture.
+- Inline line-by-line review comments
+- Native Anthropic provider (Messages API)
+- Self-consistency ensemble + deterministic evidence verification + verifier adjudication
+- On-demand commands: `@pr-sentinel review | ask | describe`
+- File ranking under the file cap; head-ref context extension; structured-output (JSON) mode
+- Published model × strategy eval leaderboard with false-positive rates
+
+## Next
+
+- **Flagship head-to-head row** in the leaderboard (GPT-5 / Claude Opus single pass) once a flagship key is wired — the "cheap ensemble vs expensive single pass" comparison the architecture is built to win.
+- **Auto-fix suggestions** as GitHub suggestion blocks (one-click apply).
+- **Deep-context mode** — optional `actions/checkout` to pull whole-file/dependency context beyond ±N lines.
+- **Per-language prompt packs** beyond the `language_hint` knob.
 
 ## Later
 
-- **Deep context mode** — optional `actions/checkout` integration to pull surrounding code (not just hunks) for the analysts.
-- **Fork-PR review via maintainer-gated re-runs** — a documented label-gated workflow for maintainers who want fork reviews without `pull_request_target` foot-guns.
-- **Auto-fix suggestions as suggested commits** — GitHub's suggestion blocks, applied with one click.
-- **Multi-language prompt packs** — per-language analyst tuning beyond the `language_hint` knob.
-- **Image signing / SLSA provenance** for the release pipeline.
+- **Multi git-provider support** — GitLab, Bitbucket, Azure DevOps.
+- **Image signing / SLSA provenance** for the release pipeline; digest-pinned base image.
+- **Fork-PR review** via a documented maintainer-gated label workflow (never `pull_request_target`).
 
 ## Much later (only after traction evidence)
 
 - **GitHub App** — one-click install, no workflow file.
-- **Hosted tier** — managed keys, team dashboard, org-wide policies. The engine stays open-source either way (open-core, honestly drawn: paid is convenience, not capability).
-- **Learning from past reviews** — memory across PRs in a repo.
+- **Hosted tier** — managed keys, team dashboard, org-wide policy. Engine stays open-source (open-core: paid is convenience, not capability).
+- **Learning across PRs** — repo-level memory of past reviews.

@@ -32,6 +32,10 @@ PR Sentinel's mitigations, all in v1:
 
 Hard caps (`max_files`, `max_input_tokens`, `max_output_tokens_per_agent`) plus the built-in skip list bound the worst-case cost per PR regardless of what arrives — a hostile 300-file PR hits the ceilings, skips, and discloses. The caps are a security guarantee, not UX polish.
 
+## Comment commands are gated by author association (v2)
+
+The `@pr-sentinel review | ask | describe` commands run on `issue_comment` events, which any GitHub user can create. Each command therefore checks the commenter's `author_association`: only `OWNER`, `MEMBER`, and `COLLABORATOR` can trigger one. A drive-by commenter cannot spend the repo owner's API key, and command text is never interpolated into any privileged context — the `ask` question goes through the same delimited-data-block sanitizer as the diff. The same evidence-anchoring and output-scrubbing defenses apply to command output.
+
 ## Supply chain
 
 - Dependencies are version-bounded in `pyproject.toml`; the Docker image uses `python:3.12-slim`.

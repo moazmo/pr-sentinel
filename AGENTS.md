@@ -6,10 +6,11 @@ PR Sentinel is a multi-agent code-review GitHub Action: five LLM agents (Archite
 
 ```bash
 pip install -e ".[dev]"        # setup (use a venv)
-pytest                         # full suite — LLM and GitHub API fully mocked, no network, no key
+pytest                         # 163 tests — LLM and GitHub API fully mocked, no network, no key
 ruff check src tests evals     # lint (line length 100)
-python evals/run.py --runs 5   # evals — hit a REAL LLM; needs PR_SENTINEL_API_KEY
-                               # (+ PR_SENTINEL_BASE_URL, PR_SENTINEL_MODEL); never run in CI
+python evals/run.py --runs 3 --label flash-v2   # evals — REAL LLM; needs PR_SENTINEL_API_KEY
+                               # env knobs: PR_SENTINEL_{BASE_URL,MODEL,SAMPLES,VERIFIER,
+                               # ANALYST_MODEL,REVIEW_MODEL}; never run in CI
 docker build -t pr-sentinel:dev .
 ```
 
@@ -19,20 +20,22 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 
 | File | Owns |
 |---|---|
-| `src/pr_sentinel/models.py` | **Finding schema — the single source of truth** — plus ReviewState (LangGraph state) |
-| `src/pr_sentinel/graph.py` | The pipeline: ingest → 4 parallel analysts → merge_findings → reviewer → publish |
-| `src/pr_sentinel/agents.py` | Analyst/reviewer runtime, prompt assembly, JSON extraction (balanced-bracket scanner) |
+| `src/pr_sentinel/models.py` | **Finding schema — the single source of truth** (incl. `evidence`, `support`) — plus ReviewState |
+| `src/pr_sentinel/graph.py` | Pipeline: ingest → 4 parallel analysts (×3 samples) → merge (vote+anchor) → verifier → reviewer → publish |
+| `src/pr_sentinel/agents.py` | Analyst/reviewer/verifier/describe/ask runtime, prompt assembly, balanced-bracket JSON extraction |
+| `src/pr_sentinel/diffmap.py` | **V2:** parse patches → numbered hunks, line maps, added-line sets, context extension (pure) |
+| `src/pr_sentinel/verification.py` | **V2:** evidence anchoring — drop findings whose quote isn't in the diff (pure) |
 | `src/pr_sentinel/prompts/*.md` | Agent system prompts — **product surface**, readable markdown |
-| `src/pr_sentinel/merge.py` | Deterministic dedup/clustering — pure functions, most heavily tested code |
-| `src/pr_sentinel/provider.py` | Thin OpenAI-compatible client; the ONLY place secrets live |
-| `src/pr_sentinel/github_client.py` | Paginated files API, sticky comment upsert, base-branch config fetch |
-| `src/pr_sentinel/chunking.py` | PR map, per-file chunks, token budgets, disclosed truncation |
-| `src/pr_sentinel/formatter.py` | Comment markdown, 65,536-char cap, severity grouping |
+| `src/pr_sentinel/merge.py` | Deterministic dedup/clustering + self-consistency `vote_findings` — pure, most-tested code |
+| `src/pr_sentinel/provider.py` | Thin OpenAI-compat + native Anthropic clients; the ONLY place secrets live; json-mode, pooled client |
+| `src/pr_sentinel/github_client.py` | Paginated files API, sticky upsert, inline review API, PR-body describe, base-branch config |
+| `src/pr_sentinel/chunking.py` | PR map, numbered file blocks, token budgets, disclosed truncation, file-priority ranking |
+| `src/pr_sentinel/formatter.py` | Comment markdown, inline-comment bodies, describe block, 65,536-char cap |
 | `src/pr_sentinel/security.py` | Prompt sanitizer + output secret scrubbing |
-| `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch) |
-| `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0 |
-| `tests/` | 102 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider |
-| `evals/` | Seeded-bug + clean + injection fixtures; `run.py` aggregate runner |
+| `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch); accuracy/output blocks |
+| `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0; `@pr-sentinel` command dispatch (author-association gated) |
+| `tests/` | 163 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config |
+| `evals/` | 17 fixtures (5 languages, hard negatives, 2 injection vectors); `run.py` env-driven leaderboard runner |
 
 ## Invariants — never break these
 
@@ -46,6 +49,9 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 8. **Cost caps are security guarantees**, not UX. Hitting a cap = skip + disclose, never error, never overrun.
 9. **Tests are part of done.** New logic ships with mocked tests in the same change. Honest counts — never inflate.
 10. **CI never calls a live LLM.** Evals are manual/dispatch only.
+11. **Evidence anchoring only ever removes findings.** `verification.py` widens *extraction* of model output, never *acceptance* — a finding still must validate against `Finding` and quote a real diff line. Don't loosen the anchor check to make a fixture pass.
+12. **The verifier and context extension fail open.** A verifier error passes findings through unadjudicated; a context-fetch error keeps the raw hunk. Never let either abort the review.
+13. **Comment commands are author-association gated.** `@pr-sentinel` commands run only for OWNER/MEMBER/COLLABORATOR. Never widen this — it's the economic-DoS guard on the comment surface.
 
 ## Conventions
 
