@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from pr_sentinel.config import SentinelConfig  # noqa: E402
 from pr_sentinel.graph import build_graph  # noqa: E402
 from pr_sentinel.models import ChangedFile, Finding, PRMetadata, Severity  # noqa: E402
-from pr_sentinel.provider import OpenAICompatProvider  # noqa: E402
+from pr_sentinel.provider import OpenAICompatProvider, estimate_cost_usd  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -74,11 +74,26 @@ def check_expectations(name: str, fixture: dict, findings: list[Finding], commen
     return failures
 
 
-async def run_fixture(provider, fixture: dict) -> tuple[list[Finding], str]:
+def config_from_env() -> SentinelConfig:
+    """Build the run config from env knobs so the leaderboard can compare
+    strategies (single pass vs ensemble+verifier) without code changes."""
+    config = SentinelConfig()
+    config.accuracy.samples = int(os.environ.get("PR_SENTINEL_SAMPLES", "3"))
+    config.accuracy.verifier = os.environ.get("PR_SENTINEL_VERIFIER", "true").lower() != "false"
+    if config.accuracy.samples == 1:
+        config.accuracy.min_support = 1
+    config.provider.analyst_model = os.environ.get("PR_SENTINEL_ANALYST_MODEL") or None
+    config.provider.review_model = os.environ.get("PR_SENTINEL_REVIEW_MODEL") or None
+    # No GitHub in evals: review hunks as-is, no inline posting, no context fetch.
+    config.review.context_lines = 0
+    config.output.inline = False
+    return config
+
+
+async def run_fixture(provider, fixture: dict, config: SentinelConfig):
     files = [ChangedFile(**f) for f in fixture["files"]]
     for f in files:
         f.additions = f.patch.count("\n+") if f.patch else 0
-    config = SentinelConfig()
     graph = build_graph(provider, github=None)
     result = await graph.ainvoke(
         {
@@ -87,7 +102,9 @@ async def run_fixture(provider, fixture: dict) -> tuple[list[Finding], str]:
             "files": files,
         }
     )
-    return result.get("merged_findings", []), result.get("final_review", "")
+    findings = result.get("merged_findings", [])
+    usage = result.get("usage")
+    return findings, result.get("final_review", ""), usage
 
 
 async def main() -> int:
@@ -98,21 +115,30 @@ async def main() -> int:
     base_url = os.environ.get("PR_SENTINEL_BASE_URL", "https://api.openai.com/v1")
     model = os.environ.get("PR_SENTINEL_MODEL", "gpt-5-mini")
     provider = OpenAICompatProvider(api_key, base_url=base_url, model=model)
+    config = config_from_env()
 
     runs = 1
     if "--runs" in sys.argv:
         runs = max(1, int(sys.argv[sys.argv.index("--runs") + 1]))
+    label = "default"
+    if "--label" in sys.argv:
+        label = sys.argv[sys.argv.index("--label") + 1]
 
     fixtures = sorted(FIXTURES_DIR.glob("*.yml"))
     # results[name] = list of failure-lists, one per run (empty list = pass)
     results: dict[str, list[list[str]]] = {p.stem: [] for p in fixtures}
+    total_in = total_out = total_cached = 0
 
     for run_index in range(1, runs + 1):
         if runs > 1:
             print(f"--- run {run_index}/{runs} ---")
         for path in fixtures:
             fixture = load_fixture(path)
-            findings, comment = await run_fixture(provider, fixture)
+            findings, comment, usage = await run_fixture(provider, fixture, config)
+            if usage is not None:
+                total_in += usage.total_prompt
+                total_out += usage.total_completion
+                total_cached += usage.total_cached
             failures = check_expectations(path.stem, fixture, findings, comment)
             results[path.stem].append(failures)
             status = "✅ pass" if not failures else "❌ FAIL"
@@ -122,8 +148,22 @@ async def main() -> int:
     total_passes = sum(1 for runs_list in results.values() for f in runs_list if not f)
     total_cells = len(fixtures) * runs
 
+    analyst_model = config.provider.resolved_analyst_model
+    cost, _ = estimate_cost_usd(analyst_model, total_in, total_out)
+    per_pr = cost / max(1, total_cells)
+    cache_pct = (100 * total_cached // total_in) if total_in else 0
+    print(
+        f"\n[{label}] samples={config.accuracy.samples} verifier={config.accuracy.verifier} "
+        f"analyst={analyst_model} review={config.provider.resolved_review_model}"
+    )
+    print(
+        f"[{label}] {total_passes}/{total_cells} passed · "
+        f"~{(total_in + total_out) / 1000:.0f}k tokens ({cache_pct}% cached) · "
+        f"≈${per_pr:.4f}/fixture-run"
+    )
+
     print("\n--- README table ---\n")
-    print(f"Evals: {runs} run(s) on `{model}`, {date.today().isoformat()}:\n")
+    print(f"Evals: {runs} run(s) on `{model}` [{label}], {date.today().isoformat()}:\n")
     print("| Fixture | Passed | Notes |")
     print("|---|---|---|")
     for name, runs_list in results.items():

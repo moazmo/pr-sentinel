@@ -1,0 +1,33 @@
+# Hard negative: a nested loop that LOOKS O(n^2) but runs over a fixed 7-element
+# constant, documented as such. A good reviewer must NOT flag it. NO findings.
+title: "Compute weekday coverage matrix"
+files:
+  - path: scheduling/coverage.py
+    status: modified
+    patch: |
+      @@ -3,6 +3,18 @@ WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+      +
+      +
+      +def coverage_matrix(shifts):
+      +    # WEEKDAYS is a fixed 7-element constant, so this is O(7 * shifts) = O(n),
+      +    # not O(n^2); the nested loop is over a bounded constant by design.
+      +    matrix = {}
+      +    for day in WEEKDAYS:
+      +        for other in WEEKDAYS:
+      +            matrix[(day, other)] = 0
+      +    for shift in shifts:
+      +        matrix[(shift.start_day, shift.end_day)] += 1
+      +    return matrix
+  - path: tests/test_coverage.py
+    status: added
+    patch: |
+      @@ -0,0 +1,7 @@
+      +from scheduling.coverage import coverage_matrix
+      +
+      +
+      +def test_coverage_counts_shifts(sample_shifts):
+      +    m = coverage_matrix(sample_shifts)
+      +    assert m[("mon", "tue")] == 2
+      +    assert sum(m.values()) == len(sample_shifts)
+expected:
+  max_findings: 0

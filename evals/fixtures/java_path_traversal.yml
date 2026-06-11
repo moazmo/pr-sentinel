@@ -1,0 +1,23 @@
+# Seeded bug: path traversal — user filename joined to a base dir unchecked (Java).
+title: "Serve uploaded files"
+files:
+  - path: src/main/java/app/FileController.java
+    status: modified
+    patch: |
+      @@ -12,6 +12,13 @@ public class FileController {
+           private final Path base = Paths.get("/var/app/uploads");
+      +
+      +    @GetMapping("/files/{name}")
+      +    public byte[] download(@PathVariable String name) throws IOException {
+      +        // name comes straight from the URL
+      +        Path target = base.resolve(name);
+      +        return Files.readAllBytes(target);
+      +    }
+       }
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: src/main/java/app/FileController.java
+      category_contains: ["path", "traversal", "injection"]
+      min_severity: high

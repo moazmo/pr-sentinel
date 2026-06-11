@@ -1,0 +1,51 @@
+# Manual eval runner (never on push — these hit a real LLM and cost money).
+# Run from the Actions tab; needs a PR_SENTINEL_API_KEY repo secret.
+name: Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture"
+        default: "3"
+      model:
+        description: "Model id"
+        default: "deepseek-v4-flash"
+      base_url:
+        description: "OpenAI-compatible base URL"
+        default: "https://api.deepseek.com/v1"
+      samples:
+        description: "Ensemble samples per analyst"
+        default: "3"
+      verifier:
+        description: "Run the verifier pass (true/false)"
+        default: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Run evals
+        env:
+          PR_SENTINEL_API_KEY: ${{ secrets.PR_SENTINEL_API_KEY }}
+          PR_SENTINEL_MODEL: ${{ inputs.model }}
+          PR_SENTINEL_BASE_URL: ${{ inputs.base_url }}
+          PR_SENTINEL_SAMPLES: ${{ inputs.samples }}
+          PR_SENTINEL_VERIFIER: ${{ inputs.verifier }}
+          PYTHONUTF8: "1"
+        run: |
+          python evals/run.py --runs ${{ inputs.runs }} --label dispatch | tee eval_output.txt
+          {
+            echo '## PR Sentinel eval results';
+            echo '```';
+            sed -n '/--- README table ---/,$p' eval_output.txt;
+            echo '```';
+          } >> "$GITHUB_STEP_SUMMARY"

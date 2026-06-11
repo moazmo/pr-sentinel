@@ -1,0 +1,31 @@
+# Seeded gap: new money-handling error path, no test file in the diff (Go).
+title: "Add withdrawal with overdraft fee"
+files:
+  - path: bank/account.go
+    status: modified
+    patch: |
+      @@ -18,7 +18,18 @@ func (a *Account) Deposit(amount int64) {
+       func (a *Account) Withdraw(amount int64) (int64, error) {
+      -	a.balance -= amount
+      -	return a.balance, nil
+      +	if amount <= 0 {
+      +		return a.balance, errors.New("amount must be positive")
+      +	}
+      +	if a.balance < amount {
+      +		if !a.overdraftEnabled {
+      +			return a.balance, ErrInsufficientFunds
+      +		}
+      +		fee := int64(3500)
+      +		a.balance -= amount + fee
+      +		return a.balance, nil
+      +	}
+      +	a.balance -= amount
+      +	return a.balance, nil
+       }
+expected:
+  min_findings: 1
+  findings:
+    - agent: test
+      file: bank/account.go
+      category_contains: ["test", "coverage", "untested"]
+      min_severity: medium

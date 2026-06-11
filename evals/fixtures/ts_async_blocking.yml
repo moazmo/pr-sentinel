@@ -1,0 +1,22 @@
+# Seeded bug: synchronous blocking I/O inside an async handler (TS).
+title: "Add config endpoint"
+files:
+  - path: src/handlers/config.ts
+    status: modified
+    patch: |
+      @@ -2,6 +2,13 @@ import * as fs from "fs";
+       import express from "express";
+      +
+      +export async function getConfig(req: express.Request, res: express.Response) {
+      +  // blocks the event loop on every request
+      +  const raw = fs.readFileSync("/etc/app/config.json", "utf8");
+      +  const cfg = JSON.parse(raw);
+      +  res.json(cfg);
+      +}
+expected:
+  min_findings: 1
+  findings:
+    - agent: performance
+      file: src/handlers/config.ts
+      category_contains: ["block", "sync", "async", "event-loop", "event loop"]
+      min_severity: medium

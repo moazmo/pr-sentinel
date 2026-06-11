@@ -1,0 +1,23 @@
+# Seeded bug: N+1 — awaiting a DB call per item inside a loop (TS/JS).
+title: "Build team roster"
+files:
+  - path: src/roster.ts
+    status: modified
+    patch: |
+      @@ -6,6 +6,14 @@ import { db } from "./db";
+       export async function buildRoster(teamIds: number[]) {
+      +  const roster = [];
+      +  for (const id of teamIds) {
+      +    const team = await db.team.findUnique({ where: { id } });
+      +    const members = await db.member.findMany({ where: { teamId: id } });
+      +    roster.push({ team: team.name, count: members.length });
+      +  }
+      +  return roster;
+       }
+expected:
+  min_findings: 1
+  findings:
+    - agent: performance
+      file: src/roster.ts
+      category_contains: ["n-plus", "n+1", "query", "loop", "batch"]
+      min_severity: medium

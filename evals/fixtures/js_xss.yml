@@ -1,0 +1,23 @@
+# Seeded bug: DOM XSS — untrusted input written to innerHTML (JS).
+title: "Render search results"
+files:
+  - path: web/results.js
+    status: modified
+    patch: |
+      @@ -4,6 +4,12 @@ export function renderResults(container, query) {
+         const box = document.getElementById("results");
+      +
+      +  function showQuery(q) {
+      +    // reflect the user's query back into the page
+      +    const banner = document.getElementById("banner");
+      +    banner.innerHTML = "You searched for: " + q;
+      +  }
+      +  showQuery(query);
+       }
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: web/results.js
+      category_contains: ["xss", "injection", "sanitiz"]
+      min_severity: high
