@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email **moazmo27@gmail.com** with details. You'll get a response within 72 hours. Please don't open public issues for exploitable vulnerabilities before a fix ships.
+Email **<moazmo27@gmail.com>** with details. You'll get a response within 72 hours. Please don't open public issues for exploitable vulnerabilities before a fix ships.
 
 ## Why PR Sentinel doesn't review fork PRs by default
 
