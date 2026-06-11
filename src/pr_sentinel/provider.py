@@ -1,13 +1,17 @@
-"""LLM provider abstraction (D6).
+"""LLM provider abstraction (D6, upgraded in V2).
 
-The OpenAI-compatible chat-completions protocol IS the v1 provider: a thin
-async httpx client with a configurable base_url reaches OpenAI, OpenRouter,
-Groq, DeepSeek, Mistral, and local Ollama with one integration.
+The OpenAI-compatible chat-completions protocol is the primary provider: a
+thin async httpx client with a configurable base_url reaches OpenAI,
+OpenRouter, Groq, DeepSeek, and local Ollama with one integration. V2 adds a
+native Anthropic Messages client behind the same Protocol (the oldest roadmap
+promise), per-call model override (two-tier routing), JSON response-format
+with graceful fallback, a shared pooled connection, and cached-token
+accounting (DeepSeek bills cached input at ~1/50th — worth surfacing).
 
-Deliberately ~100 lines and self-written instead of LangChain model wrappers
-or LiteLLM: every line is understood, the Docker image stays slim, and the
-failure surface is ours. Secrets live ONLY here, in the HTTP client layer —
-no prompt template or formatter can reach them (threat model, Threat 2.3).
+Deliberately self-written instead of LangChain wrappers or LiteLLM: every
+line is understood, the Docker image stays slim, and the failure surface is
+ours. Secrets live ONLY here, in the HTTP client layer — no prompt template
+or formatter can reach them (threat model, Threat 2.3).
 """
 
 from __future__ import annotations
@@ -28,11 +32,19 @@ class CompletionResult:
     text: str
     prompt_tokens: int
     completion_tokens: int
+    cached_tokens: int = 0  # portion of prompt_tokens served from prompt cache
 
 
 class LLMProvider(Protocol):
     async def complete(
-        self, system: str, user: str, *, max_tokens: int, temperature: float
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float = 0.1,
+        model: str | None = None,
+        json_mode: bool = False,
     ) -> CompletionResult: ...
 
 
@@ -65,12 +77,33 @@ class OpenAICompatProvider:
         self._model = model
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._timeout = timeout_seconds
+        # One pooled connection per provider instance (V2 D1) — four parallel
+        # analysts shouldn't pay a TLS handshake per call.
+        self._client: httpx.AsyncClient | None = None
+        # Set False after an endpoint rejects response_format (V2 A6).
+        self._json_mode_supported: bool | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self._timeout)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def complete(
-        self, system: str, user: str, *, max_tokens: int, temperature: float = 0.1
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float = 0.1,
+        model: str | None = None,
+        json_mode: bool = False,
     ) -> CompletionResult:
-        payload = {
-            "model": self._model,
+        payload: dict = {
+            "model": model or self._model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -78,23 +111,36 @@ class OpenAICompatProvider:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        use_json = json_mode and self._json_mode_supported is not False
+        if use_json:
+            payload["response_format"] = {"type": "json_object"}
+
         last_error = "unknown error"
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
                 async with self._semaphore:
-                    async with httpx.AsyncClient(timeout=self._timeout) as client:
-                        response = await client.post(
-                            f"{self._base_url}/chat/completions",
-                            json=payload,
-                            headers={"Authorization": f"Bearer {self._api_key}"},
-                        )
+                    response = await self._get_client().post(
+                        f"{self._base_url}/chat/completions",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                    )
             except httpx.HTTPError as exc:
                 last_error = f"network error: {type(exc).__name__}"
                 await self._backoff(attempt)
                 continue
 
             if response.status_code == 200:
+                if use_json:
+                    self._json_mode_supported = True
                 return self._parse(response)
+
+            # Endpoint doesn't speak response_format -> remember and retry bare.
+            if response.status_code == 400 and use_json:
+                logger.info("Endpoint rejected response_format; falling back without it.")
+                self._json_mode_supported = False
+                payload.pop("response_format", None)
+                use_json = False
+                continue
 
             last_error = f"HTTP {response.status_code} from provider"
             if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS:
@@ -110,10 +156,17 @@ class OpenAICompatProvider:
             data = response.json()
             text = data["choices"][0]["message"]["content"] or ""
             usage = data.get("usage") or {}
+            details = usage.get("prompt_tokens_details") or {}
+            cached = int(
+                usage.get("prompt_cache_hit_tokens")  # DeepSeek's field
+                or details.get("cached_tokens")        # OpenAI's field
+                or 0
+            )
             return CompletionResult(
                 text=text,
                 prompt_tokens=int(usage.get("prompt_tokens", 0)),
                 completion_tokens=int(usage.get("completion_tokens", 0)),
+                cached_tokens=cached,
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(f"unexpected response shape: {type(exc).__name__}") from exc
@@ -121,10 +174,104 @@ class OpenAICompatProvider:
     @staticmethod
     async def _backoff(attempt: int) -> None:
         # 1s, 2s, 4s with jitter — enough to ride out a 429 burst from
-        # four parallel analysts without stalling the whole run.
+        # parallel analysts without stalling the whole run.
         delay = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
         logger.info("Retrying provider call in %.1fs (attempt %d)", delay, attempt)
         await asyncio.sleep(delay)
+
+
+class AnthropicProvider:
+    """Native Anthropic Messages API client behind the same Protocol (V2 D2).
+
+    Same thin-client philosophy: ~70 lines of httpx, no SDK dependency.
+    `json_mode` is accepted and ignored (Anthropic has no response_format;
+    the prompt + parser tolerance carry it).
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.anthropic.com",
+        model: str = "claude-haiku-4-5-20251001",
+        *,
+        max_concurrent: int = 8,
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._timeout = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self._timeout)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float = 0.1,
+        model: str | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        payload = {
+            "model": model or self._model,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        last_error = "unknown error"
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                async with self._semaphore:
+                    response = await self._get_client().post(
+                        f"{self._base_url}/v1/messages",
+                        json=payload,
+                        headers={
+                            "x-api-key": self._api_key,
+                            "anthropic-version": "2023-06-01",
+                        },
+                    )
+            except httpx.HTTPError as exc:
+                last_error = f"network error: {type(exc).__name__}"
+                await OpenAICompatProvider._backoff(attempt)
+                continue
+            if response.status_code == 200:
+                return self._parse(response)
+            last_error = f"HTTP {response.status_code} from provider"
+            if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS:
+                await OpenAICompatProvider._backoff(attempt)
+                continue
+            break
+        raise ProviderError(f"completion failed after {_MAX_ATTEMPTS} attempt(s): {last_error}")
+
+    @staticmethod
+    def _parse(response: httpx.Response) -> CompletionResult:
+        try:
+            data = response.json()
+            text = "".join(
+                block.get("text", "") for block in data.get("content", [])
+                if block.get("type") == "text"
+            )
+            usage = data.get("usage") or {}
+            return CompletionResult(
+                text=text,
+                prompt_tokens=int(usage.get("input_tokens", 0)),
+                completion_tokens=int(usage.get("output_tokens", 0)),
+                cached_tokens=int(usage.get("cache_read_input_tokens", 0)),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProviderError(f"unexpected response shape: {type(exc).__name__}") from exc
 
 
 def estimate_tokens(text: str) -> int:
@@ -140,6 +287,7 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
     "gpt-5-mini": (0.25, 2.00),
     "gpt-5": (1.25, 10.00),
     "deepseek-v4-flash": (0.14, 0.28),
+    "deepseek-v4-pro": (0.28, 0.42),
     "claude-haiku-4-5": (1.00, 5.00),
 }
 

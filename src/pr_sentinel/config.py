@@ -34,6 +34,34 @@ class ProviderConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-5-mini"
     api_key_env: str = "PR_SENTINEL_API_KEY"
+    # "openai-compat" (default) or "anthropic" (native Messages API).
+    kind: str = "openai-compat"
+    # Two-tier routing (V2 A5): analysts may use a cheaper model than the
+    # verifier/reviewer. Both default to `model` when unset.
+    analyst_model: str | None = None
+    review_model: str | None = None
+
+    @property
+    def resolved_analyst_model(self) -> str:
+        return self.analyst_model or self.model
+
+    @property
+    def resolved_review_model(self) -> str:
+        return self.review_model or self.model
+
+
+class AccuracyConfig(BaseModel):
+    """V2 accuracy core knobs. Defaults tuned for cheap-model ensembles."""
+
+    # Self-consistency samples per analyst per chunk. >1 trades a little
+    # cached-input cost for a large variance cut (findings are majority-voted).
+    samples: int = Field(default=3, ge=1, le=5)
+    # Findings must appear in at least this many samples to survive the vote
+    # (high/critical findings are exempt — they go to evidence verification).
+    min_support: int = Field(default=2, ge=1, le=5)
+    # The adjudication pass: one batched LLM call that confirms/rejects each
+    # merged finding against the numbered diff before the reviewer writes prose.
+    verifier: bool = True
 
 
 class AgentsConfig(BaseModel):
@@ -53,15 +81,28 @@ class LimitsConfig(BaseModel):
 class ReviewConfig(BaseModel):
     include_deletions: bool = False
     language_hint: str = ""
+    # Extra context lines fetched from the head ref around each hunk (V2 A7).
+    # 0 disables the extra contents-API calls entirely.
+    context_lines: int = Field(default=8, ge=0, le=25)
+
+
+class OutputConfig(BaseModel):
+    # Post findings as inline review comments anchored to diff lines (V2 B1);
+    # unanchorable findings stay in the summary comment either way.
+    inline: bool = True
 
 
 class SentinelConfig(BaseModel):
     provider: ProviderConfig = Field(default_factory=ProviderConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
     min_severity: Severity = Severity.MEDIUM
     ignore: list[str] = Field(default_factory=list)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
+    output: OutputConfig = Field(default_factory=OutputConfig)
+    # Maintain a PR description between markers in the PR body (V2 B4).
+    describe: bool = False
     dry_run: bool = False
 
     # Not user-facing config; carries parse warnings into the final comment.

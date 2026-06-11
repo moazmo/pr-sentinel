@@ -56,8 +56,13 @@ class Finding(BaseModel):
     category: str = Field(min_length=1, max_length=80)
     message: str = Field(min_length=1, max_length=2000)
     suggestion: str | None = Field(default=None, max_length=2000)
+    # The exact offending line quoted from the diff (V2). Verification drops
+    # any finding whose evidence does not literally exist in the patch.
+    evidence: str | None = Field(default=None, max_length=500)
     # Filled by the merge pass when several agents raise the same issue.
     also_flagged_by: list[AgentName] = Field(default_factory=list)
+    # How many ensemble samples raised this finding (V2 self-consistency).
+    support: int = Field(default=1, ge=1)
 
     @field_validator("line_end")
     @classmethod
@@ -106,10 +111,13 @@ class UsageStats(BaseModel):
 
     prompt_tokens: dict[str, int] = Field(default_factory=dict)
     completion_tokens: dict[str, int] = Field(default_factory=dict)
+    cached_tokens: dict[str, int] = Field(default_factory=dict)
 
-    def add(self, agent: str, prompt: int, completion: int) -> None:
+    def add(self, agent: str, prompt: int, completion: int, cached: int = 0) -> None:
         self.prompt_tokens[agent] = self.prompt_tokens.get(agent, 0) + prompt
         self.completion_tokens[agent] = self.completion_tokens.get(agent, 0) + completion
+        if cached:
+            self.cached_tokens[agent] = self.cached_tokens.get(agent, 0) + cached
 
     @property
     def total_prompt(self) -> int:
@@ -119,15 +127,22 @@ class UsageStats(BaseModel):
     def total_completion(self) -> int:
         return sum(self.completion_tokens.values())
 
+    @property
+    def total_cached(self) -> int:
+        return sum(self.cached_tokens.values())
+
     def merge(self, other: "UsageStats") -> "UsageStats":
         merged = UsageStats(
             prompt_tokens=dict(self.prompt_tokens),
             completion_tokens=dict(self.completion_tokens),
+            cached_tokens=dict(self.cached_tokens),
         )
         for agent, n in other.prompt_tokens.items():
             merged.prompt_tokens[agent] = merged.prompt_tokens.get(agent, 0) + n
         for agent, n in other.completion_tokens.items():
             merged.completion_tokens[agent] = merged.completion_tokens.get(agent, 0) + n
+        for agent, n in other.cached_tokens.items():
+            merged.cached_tokens[agent] = merged.cached_tokens.get(agent, 0) + n
         return merged
 
 
