@@ -11,16 +11,41 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
 from .config import SentinelConfig
+from .diffmap import render_numbered
 from .models import ChangedFile
 from .provider import estimate_tokens
 from .security import sanitize_for_prompt
 from .skip_rules import skip_reason
 
 _HUNK_HEADER = re.compile(r"^@@ .*@@", re.MULTILINE)
+
+# Extensions that carry reviewable logic. Everything else still gets reviewed,
+# just ranked below source code when the max_files cap forces choices.
+_SOURCE_EXTENSIONS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".kt", ".rb", ".rs",
+    ".c", ".h", ".cpp", ".hpp", ".cs", ".php", ".swift", ".scala", ".sql",
+    ".sh", ".ps1",
+}
+
+
+def file_priority(f: ChangedFile) -> float:
+    """Ranking score for the max_files cap (V2 B3): when a PR exceeds the cap,
+    keep the files where review matters most. Source > config > docs; bigger
+    churn first (log-damped so one 2,000-line file doesn't outrank everything)."""
+    path = f.path.lower()
+    ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
+    if ext in _SOURCE_EXTENSIONS:
+        weight = 1.0 if "test" not in path else 0.6
+    elif ext in (".yml", ".yaml", ".toml", ".json", ".tf"):
+        weight = 0.5
+    else:
+        weight = 0.3
+    return weight * math.log1p(f.additions + f.deletions)
 
 
 @dataclass
@@ -48,8 +73,12 @@ def build_pr_map(pr_title: str, files: list[ChangedFile]) -> str:
 
 def apply_skip_rules(files: list[ChangedFile], config: SentinelConfig) -> list[ChangedFile]:
     """Mark files that must not be reviewed; never drop them from the list —
-    skipped files are disclosed in the output."""
-    kept = 0
+    skipped files are disclosed in the output.
+
+    When the max_files cap forces choices, the files KEPT are the highest
+    review-priority ones (V2 B3), not merely the first ones the API returned.
+    """
+    candidates: list[ChangedFile] = []
     for f in files:
         reason = skip_reason(f.path, config.ignore)
         if reason is not None:
@@ -59,9 +88,13 @@ def apply_skip_rules(files: list[ChangedFile], config: SentinelConfig) -> list[C
         elif f.status == "removed" and not config.review.include_deletions:
             f.skipped, f.skip_reason = True, "pure deletion (review.include_deletions: false)"
         else:
-            kept += 1
-            if kept > config.limits.max_files:
-                f.skipped, f.skip_reason = True, f"over max_files cap ({config.limits.max_files})"
+            candidates.append(f)
+
+    if len(candidates) > config.limits.max_files:
+        ranked = sorted(candidates, key=file_priority, reverse=True)
+        for f in ranked[config.limits.max_files:]:
+            f.skipped = True
+            f.skip_reason = f"over max_files cap ({config.limits.max_files}, lowest review priority)"
     return files
 
 
@@ -91,8 +124,11 @@ def _truncate_patch(patch: str, token_budget: int) -> tuple[str, float]:
 
 
 def _file_block(f: ChangedFile) -> str:
+    """Render a file's patch with absolute new-file line numbers (V2 A1) so
+    analysts cite numbers they can see, sanitized against delimiter escapes."""
     rename = f" (renamed from {f.previous_path})" if f.previous_path else ""
-    patch = sanitize_for_prompt(f.patch or "")
+    numbered = render_numbered(f.patch or "")
+    patch = sanitize_for_prompt(numbered if numbered else (f.patch or ""))
     return f'<file path="{f.path}" status="{f.status}"{rename}>\n{patch}\n</file>'
 
 
@@ -112,14 +148,23 @@ def build_chunks(files: list[ChangedFile], config: SentinelConfig) -> list[Chunk
         cost = estimate_tokens(block)
 
         if cost > per_call:
+            # Truncation budgets against the raw patch, but cost is measured on
+            # the line-numbered render (larger). Shrink-retry until the rendered
+            # block actually fits, so per_call is a real ceiling, not a guess.
             overhead = estimate_tokens(_file_block(f.model_copy(update={"patch": ""})))
+            original_patch = f.patch or ""
             keep_budget = per_call - overhead
-            truncated, fraction = _truncate_patch(f.patch or "", max(50, keep_budget))
+            fraction = 1.0
+            for _ in range(4):
+                truncated, fraction = _truncate_patch(original_patch, max(50, keep_budget))
+                f.patch = truncated
+                block = _file_block(f)
+                cost = estimate_tokens(block)
+                if cost <= per_call:
+                    break
+                keep_budget = int(keep_budget * 0.7)
             f.truncated = True
             f.truncation_note = f"reviewed partially ({fraction:.0%} of hunks) due to size"
-            f.patch = truncated
-            block = _file_block(f)
-            cost = estimate_tokens(block)
 
         if used_global + cost > global_budget:
             f.skipped = True

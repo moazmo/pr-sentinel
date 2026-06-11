@@ -79,8 +79,12 @@ def _footer(usage: UsageStats, model: str, agents_run: int) -> str:
     total_in, total_out = usage.total_prompt, usage.total_completion
     cost, exact = estimate_cost_usd(model, total_in, total_out)
     approx = "" if exact else "~rate "
+    cache_part = ""
+    if usage.total_cached and total_in:
+        cache_part = f", {100 * usage.total_cached // total_in}% cached"
     cost_part = (
-        f" · ~{(total_in + total_out) / 1000:.1f}k tokens ({approx}≈${cost:.3f} on `{model}`)"
+        f" · ~{(total_in + total_out) / 1000:.1f}k tokens "
+        f"({approx}≈${cost:.3f} on `{model}`{cache_part})"
         if (total_in + total_out)
         else ""
     )
@@ -89,6 +93,32 @@ def _footer(usage: UsageStats, model: str, agents_run: int) -> str:
         f"[PR Sentinel](https://github.com/moazmo/pr-sentinel) · "
         f"tune via `.pr-sentinel.yml`</sub>"
     )
+
+
+def format_inline_body(finding: Finding) -> str:
+    """The body of one inline review comment (V2 B1)."""
+    severity = _SEVERITY_HEADER[finding.severity]
+    body = f"**{severity}** · [{_attribution(finding)}] {finding.message}"
+    if finding.suggestion:
+        body += f"\n\n**Suggested fix:** {finding.suggestion}"
+    return body + "\n\n<sub>🛡️ PR Sentinel</sub>"
+
+
+def format_description(description: dict) -> str:
+    """Render the Describe agent's JSON into the PR-body block (V2 B4)."""
+    parts = ["### 🛡️ PR Sentinel — summary", str(description.get("summary", "")).strip()]
+    change_type = str(description.get("type", "")).strip()
+    if change_type:
+        parts.append(f"**Type:** {change_type}")
+    walkthrough = description.get("walkthrough") or []
+    rows = [
+        f"| `{item['file']}` | {item['change']} |"
+        for item in walkthrough
+        if isinstance(item, dict) and item.get("file") and item.get("change")
+    ]
+    if rows:
+        parts.append("| File | Change |\n|---|---|\n" + "\n".join(rows))
+    return "\n\n".join(p for p in parts if p)
 
 
 def format_review(
@@ -101,9 +131,12 @@ def format_review(
     errors: list[AgentError] | None = None,
     warnings: list[str] | None = None,
     agents_run: int = 5,
+    inline_findings: list[Finding] | None = None,
 ) -> str:
     errors = errors or []
     warnings = warnings or []
+    inline_findings = inline_findings or []
+    total_count = len(findings) + len(inline_findings)
 
     parts: list[str] = ["## 🛡️ PR Sentinel Review"]
 
@@ -112,16 +145,30 @@ def format_review(
         by_severity.setdefault(f.severity, []).append(f)
 
     completed = agents_run - len(errors)
-    if findings:
+    if total_count:
+        all_by_severity: dict[Severity, int] = {}
+        for f in findings + inline_findings:
+            all_by_severity[f.severity] = all_by_severity.get(f.severity, 0) + 1
         counts = ", ".join(
-            f"{len(v)} {s.value.capitalize()}" for s, v in by_severity.items()
+            f"{n} {s.value.capitalize()}"
+            for s, n in sorted(all_by_severity.items(), key=lambda kv: kv[0].rank)
         )
+        inline_note = f" · {len(inline_findings)} posted inline" if inline_findings else ""
         parts.append(
-            f"**{len(findings)} finding{'s' if len(findings) != 1 else ''} ({counts}) "
-            f"· {completed}/{agents_run} agents completed**"
+            f"**{total_count} finding{'s' if total_count != 1 else ''} ({counts}) "
+            f"· {completed}/{agents_run} agents completed{inline_note}**"
         )
         if verdict:
             parts.append(f"> {verdict}")
+        if inline_findings:
+            index = "\n".join(
+                f"- {_location(f)} — [{_attribution(f)}] {f.category}"
+                for f in sorted(inline_findings, key=lambda f: (f.severity.rank, f.file))
+            )
+            parts.append(
+                f"<details><summary>📌 Inline comments ({len(inline_findings)})"
+                f"</summary>\n\n{index}\n\n</details>"
+            )
     elif errors:
         # Zero findings is NOT "looks clean" when agents failed — say so honestly.
         parts.append(

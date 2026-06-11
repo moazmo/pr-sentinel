@@ -19,6 +19,7 @@ from .config import CONFIG_FILENAME, SentinelConfig, load_config
 from .formatter import format_failure
 from .github_client import GitHubClient, GitHubError, pr_metadata_from_event
 from .graph import build_graph
+from .models import PRMetadata
 from .provider import OpenAICompatProvider
 from .security import scrub_secrets
 
@@ -74,19 +75,75 @@ async def run() -> int:
         return 0
 
 
+# Author associations allowed to trigger comment commands (V2 B2). Drive-by
+# commenters must not be able to spend the repo owner's API budget.
+_TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+_COMMAND_PREFIX = "@pr-sentinel"
+
+
+def parse_command(comment_body: str) -> tuple[str, str] | None:
+    """Parse `@pr-sentinel <review|describe|ask ...>` from a comment body.
+    Returns (command, argument) or None when the comment is not for us."""
+    stripped = comment_body.strip()
+    if not stripped.lower().startswith(_COMMAND_PREFIX):
+        return None
+    rest = stripped[len(_COMMAND_PREFIX):].strip()
+    if not rest:
+        return None
+    word, _, argument = rest.partition(" ")
+    word = word.lower()
+    if word in ("review", "describe"):
+        return word, ""
+    if word == "ask" and argument.strip():
+        return "ask", argument.strip()
+    return None
+
+
+def _command_from_event(event: dict) -> tuple[str, str, int] | None:
+    """Validate an issue_comment event: PR comment, trusted author, known
+    command. Returns (command, argument, pr_number) or None."""
+    comment = event.get("comment") or {}
+    issue = event.get("issue") or {}
+    if "pull_request" not in issue:
+        return None
+    if event.get("action") not in (None, "created"):
+        return None
+    association = str(comment.get("author_association") or "").upper()
+    if association not in _TRUSTED_ASSOCIATIONS:
+        logger.info("Ignoring command from untrusted association %r.", association)
+        return None
+    parsed = parse_command(str(comment.get("body") or ""))
+    if parsed is None:
+        return None
+    number = int(issue.get("number") or 0)
+    if number <= 0:
+        return None
+    return parsed[0], parsed[1], number
+
+
+async def _pr_from_api(github: GitHubClient, repo: str, number: int) -> PRMetadata:
+    """issue_comment payloads carry no PR details; fetch them."""
+    data = await github.get_pr(number)
+    return pr_metadata_from_event({"pull_request": data}, repo)
+
+
 async def _run() -> int:
     event = _read_event()
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     if event is None or not repo:
         return 0  # not a usable Actions context; nothing to do, nothing to break
 
-    if "pull_request" not in event:
-        logger.info("Event is not a pull_request; skipping.")
-        return 0
-
-    pr = pr_metadata_from_event(event, repo)
-    if pr.number <= 0:
-        logger.error("Could not determine PR number from the event payload.")
+    command: tuple[str, str, int] | None = None
+    if "pull_request" in event:
+        pr = pr_metadata_from_event(event, repo)
+    elif "comment" in event:
+        command = _command_from_event(event)
+        if command is None:
+            logger.info("Comment is not an actionable PR Sentinel command; skipping.")
+            return 0
+        pr = None  # fetched below, once we have a client
+    else:
+        logger.info("Event is neither a pull_request nor a PR comment; skipping.")
         return 0
 
     token = _resolve_github_token()
@@ -95,6 +152,17 @@ async def _run() -> int:
         return 0
 
     github = GitHubClient(token, repo)
+
+    if command is not None:
+        try:
+            pr = await _pr_from_api(github, repo, command[2])
+        except GitHubError:
+            logger.error("Could not fetch PR #%d for the command.", command[2])
+            return 0
+    assert pr is not None
+    if pr.number <= 0:
+        logger.error("Could not determine PR number from the event payload.")
+        return 0
 
     # Config comes from the BASE branch — a hostile PR must not be able to
     # rewrite the rules that review it (threat model, Threat 2.6).
@@ -115,30 +183,84 @@ async def _run() -> int:
         )
         return 0
 
-    provider = OpenAICompatProvider(
-        api_key,
-        base_url=config.provider.base_url,
-        model=config.provider.model,
-        max_concurrent=config.limits.max_concurrent_requests,
-        timeout_seconds=config.limits.agent_timeout_seconds,
-    )
+    if config.provider.kind == "anthropic":
+        from .provider import AnthropicProvider
 
-    graph = build_graph(provider, github, known_secrets=[api_key, token])
-    try:
-        result = await graph.ainvoke({"config": config, "pr": pr})
-        logger.info(
-            "Review complete: %d finding(s) posted to PR #%d.",
-            len(result.get("merged_findings", [])),
-            pr.number,
+        provider = AnthropicProvider(
+            api_key,
+            base_url=config.provider.base_url,
+            model=config.provider.model,
+            max_concurrent=config.limits.max_concurrent_requests,
+            timeout_seconds=config.limits.agent_timeout_seconds,
         )
-    except Exception as exc:  # noqa: BLE001 — anything here must degrade, not crash CI
-        reason = scrub_secrets(f"{type(exc).__name__}", [api_key, token])
-        logger.error("Review failed: %s", reason)
-        try:
-            await github.upsert_comment(pr.number, format_failure(reason))
-        except GitHubError:
-            logger.error("Could not post the failure comment either; see logs above.")
+    else:
+        provider = OpenAICompatProvider(
+            api_key,
+            base_url=config.provider.base_url,
+            model=config.provider.model,
+            max_concurrent=config.limits.max_concurrent_requests,
+            timeout_seconds=config.limits.agent_timeout_seconds,
+        )
+
+    try:
+        if command is not None and command[0] == "ask":
+            await _handle_ask(provider, github, pr, config, command[1], [api_key, token])
+        elif command is not None and command[0] == "describe":
+            await _handle_describe(provider, github, pr, config, [api_key, token])
+        else:  # pull_request event, or `@pr-sentinel review`
+            graph = build_graph(provider, github, known_secrets=[api_key, token])
+            try:
+                result = await graph.ainvoke({"config": config, "pr": pr})
+                logger.info(
+                    "Review complete: %d finding(s) posted to PR #%d.",
+                    len(result.get("merged_findings", [])),
+                    pr.number,
+                )
+            except Exception as exc:  # noqa: BLE001 — must degrade, not crash CI
+                reason = scrub_secrets(f"{type(exc).__name__}", [api_key, token])
+                logger.error("Review failed: %s", reason)
+                try:
+                    await github.upsert_comment(pr.number, format_failure(reason))
+                except GitHubError:
+                    logger.error("Could not post the failure comment either; see logs above.")
+    finally:
+        close = getattr(provider, "aclose", None)
+        if close is not None:
+            await close()
     return 0
+
+
+async def _ingest_for_command(github: GitHubClient, pr, config):
+    """Files -> skip rules -> chunks + PR map, for single-call commands."""
+    from .chunking import apply_skip_rules, build_chunks, build_pr_map
+
+    files = apply_skip_rules(await github.list_pr_files(pr.number), config)
+    return build_chunks(files, config), build_pr_map(pr.title, files)
+
+
+async def _handle_ask(provider, github, pr, config, question: str, secrets: list[str]) -> None:
+    from .agents import run_ask
+
+    chunks, pr_map = await _ingest_for_command(github, pr, config)
+    answer, _ = await run_ask(provider, pr_map, chunks, question, config)
+    if answer is None:
+        answer = "Sorry — the question could not be answered (provider error). See the Action logs."
+    body = f"### 🛡️ PR Sentinel — answer\n\n{scrub_secrets(answer, secrets)}"
+    await github.post_comment(pr.number, body)
+
+
+async def _handle_describe(provider, github, pr, config, secrets: list[str]) -> None:
+    from .agents import run_describe
+    from .formatter import format_description
+
+    chunks, pr_map = await _ingest_for_command(github, pr, config)
+    description, _ = await run_describe(provider, pr_map, chunks, config)
+    if description is None:
+        logger.error("Describe could not generate a description.")
+        return
+    await github.update_pr_description(
+        pr.number, scrub_secrets(format_description(description), secrets)
+    )
 
 
 def cli() -> None:

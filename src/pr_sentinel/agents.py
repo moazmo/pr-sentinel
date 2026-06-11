@@ -20,10 +20,15 @@ from .provider import LLMProvider, ProviderError
 
 logger = logging.getLogger(__name__)
 
-# 0.0 for analysts: structured extraction, not prose — every tenth of
-# temperature is measurable run-to-run variance in the eval harness.
+# 0.0 for single-sample analysts: structured extraction, not prose — every
+# tenth of temperature is measurable run-to-run variance in the eval harness.
+# With self-consistency sampling (V2) the OPPOSITE applies: samples must be
+# diverse for the vote to correct anything, so K>1 uses a higher temperature
+# and the vote + evidence anchoring absorb the noise.
 ANALYST_TEMPERATURE = 0.0
+ENSEMBLE_TEMPERATURE = 0.6
 REVIEWER_TEMPERATURE = 0.2
+VERIFIER_TEMPERATURE = 0.0
 # One re-ask when a model reply contains no parseable JSON at all. Findings
 # silently lost to a formatting hiccup cost more than one extra cheap call.
 PARSE_RETRIES = 1
@@ -163,14 +168,19 @@ async def run_analyst(
     chunks: list,
     config: SentinelConfig,
 ) -> tuple[list[Finding], UsageStats, AgentError | None]:
-    """Run one analyst over every chunk. Per-chunk failures degrade to a
-    partial result; only a fully-failed agent is reported as an error (D3)."""
+    """Run one analyst over every chunk, K self-consistency samples per chunk
+    (V2 A3). Per-call failures degrade to a partial result; only a fully-failed
+    agent is reported as an error (D3)."""
+    from .merge import vote_findings  # local import avoids a module cycle
+
     system = analyst_system_prompt(agent, config.review.language_hint)
     usage = UsageStats()
-    findings: list[Finding] = []
+    samples_per_chunk = config.accuracy.samples
+    temperature = ANALYST_TEMPERATURE if samples_per_chunk == 1 else ENSEMBLE_TEMPERATURE
     failures = 0
+    total_calls = 0
 
-    async def review_chunk(chunk) -> list[Finding]:
+    async def one_sample(chunk) -> list[Finding]:
         nonlocal failures
         user = f"{pr_map}\n\n<diff>\n{chunk.text}\n</diff>"
         for attempt in range(1 + PARSE_RETRIES):
@@ -180,15 +190,20 @@ async def run_analyst(
                         system,
                         user,
                         max_tokens=config.limits.max_output_tokens_per_agent,
-                        temperature=ANALYST_TEMPERATURE,
+                        temperature=temperature,
+                        model=config.provider.resolved_analyst_model,
+                        json_mode=True,
                     ),
                     timeout=config.limits.agent_timeout_seconds,
                 )
             except (ProviderError, asyncio.TimeoutError) as exc:
                 failures += 1
-                logger.warning("%s agent chunk failed: %s", agent.value, exc)
+                logger.warning("%s agent call failed: %s", agent.value, exc)
                 return []
-            usage.add(agent.value, result.prompt_tokens, result.completion_tokens)
+            usage.add(
+                agent.value, result.prompt_tokens, result.completion_tokens,
+                cached=result.cached_tokens,
+            )
             # Distinguish "reply contained no JSON at all" (worth one re-ask —
             # findings are being lost to a formatting hiccup) from a valid
             # empty/clean result or items dropped by schema validation.
@@ -201,12 +216,20 @@ async def run_analyst(
             return parse_findings(result.text, agent)
         return []
 
+    async def review_chunk(chunk) -> list[Finding]:
+        sample_results = await asyncio.gather(
+            *(one_sample(chunk) for _ in range(samples_per_chunk))
+        )
+        return vote_findings(
+            list(sample_results), min_support=config.accuracy.min_support
+        )
+
+    total_calls = len(chunks) * samples_per_chunk
     results = await asyncio.gather(*(review_chunk(c) for c in chunks))
-    for chunk_findings in results:
-        findings.extend(chunk_findings)
+    findings: list[Finding] = [f for chunk_findings in results for f in chunk_findings]
 
     error: AgentError | None = None
-    if chunks and failures == len(chunks):
+    if total_calls and failures == total_calls:
         error = AgentError(agent=agent.value, message="all calls failed (provider error/timeout)")
     return findings, usage, error
 
@@ -231,28 +254,38 @@ async def run_reviewer(
     }
     user = "<findings_input>\n" + json.dumps(payload, indent=1) + "\n</findings_input>"
     usage = UsageStats()
-    try:
-        result = await asyncio.wait_for(
-            provider.complete(
-                system,
-                user,
-                max_tokens=config.limits.max_output_tokens_per_agent * 2,
-                temperature=REVIEWER_TEMPERATURE,
-            ),
-            timeout=config.limits.agent_timeout_seconds,
+    for attempt in range(1 + PARSE_RETRIES):
+        try:
+            result = await asyncio.wait_for(
+                provider.complete(
+                    system,
+                    user,
+                    max_tokens=config.limits.max_output_tokens_per_agent * 2,
+                    temperature=REVIEWER_TEMPERATURE,
+                    model=config.provider.resolved_review_model,
+                    json_mode=True,
+                ),
+                timeout=config.limits.agent_timeout_seconds,
+            )
+        except (ProviderError, asyncio.TimeoutError) as exc:
+            logger.warning("Reviewer agent failed: %s", exc)
+            return (
+                "",
+                [f for cluster in clusters for f in cluster],
+                usage,
+                AgentError(agent="reviewer", message=str(exc)),
+            )
+        usage.add(
+            "reviewer", result.prompt_tokens, result.completion_tokens,
+            cached=result.cached_tokens,
         )
-    except (ProviderError, asyncio.TimeoutError) as exc:
-        logger.warning("Reviewer agent failed: %s", exc)
-        return (
-            "",
-            [f for cluster in clusters for f in cluster],
-            usage,
-            AgentError(agent="reviewer", message=str(exc)),
-        )
-    usage.add("reviewer", result.prompt_tokens, result.completion_tokens)
+        verdict, findings = _parse_reviewer_output(result.text)
+        if findings is None and attempt < PARSE_RETRIES:
+            logger.warning("Reviewer returned an unexpected shape; re-asking once.")
+            continue
+        break
 
-    verdict, findings = _parse_reviewer_output(result.text)
-    if findings is None:  # unparseable -> deterministic fallback
+    if findings is None:  # unparseable twice -> deterministic fallback
         return (
             "",
             [f for cluster in clusters for f in cluster],
@@ -299,3 +332,199 @@ def _parse_reviewer_output(raw: str) -> tuple[str, list[Finding] | None]:
 
 def severity_at_least(finding: Finding, threshold: Severity) -> bool:
     return finding.severity.rank <= threshold.rank
+
+
+# --------------------------------------------------------------------------
+# Verifier (V2 A4): the adjudication pass between merge and reviewer.
+# --------------------------------------------------------------------------
+
+def _excerpt_for(finding: Finding, line_map: dict[int, str], radius: int = 4) -> str:
+    lo = max(1, finding.line_start - radius)
+    hi = finding.line_end + radius
+    lines = [f"{n:>5} | {line_map[n]}" for n in range(lo, hi + 1) if n in line_map]
+    return "\n".join(lines)
+
+
+async def run_verifier(
+    provider: LLMProvider,
+    pr_map: str,
+    findings: list[Finding],
+    files: list,
+    config: SentinelConfig,
+) -> tuple[list[Finding], UsageStats, AgentError | None]:
+    """One batched call that confirms/rejects/downgrades each finding against
+    the numbered diff. Fail-open: any failure returns the findings untouched —
+    a missing adjudication beats a missing review."""
+    from .diffmap import line_text_map  # local import keeps module deps one-way
+
+    usage = UsageStats()
+    if not findings:
+        return findings, usage, None
+
+    maps = {f.path: line_text_map(f.patch or "") for f in files if not f.skipped}
+    payload = {
+        "pr": pr_map,
+        "findings": [
+            {"id": i, **f.model_dump(mode="json", exclude={"also_flagged_by", "support"})}
+            for i, f in enumerate(findings)
+        ],
+        "excerpts": {
+            str(i): _excerpt_for(f, maps.get(f.file, {}))
+            for i, f in enumerate(findings)
+        },
+    }
+    user = "<verification_input>\n" + json.dumps(payload, indent=1) + "\n</verification_input>"
+    try:
+        result = await asyncio.wait_for(
+            provider.complete(
+                load_prompt("verifier"),
+                user,
+                max_tokens=config.limits.max_output_tokens_per_agent,
+                temperature=VERIFIER_TEMPERATURE,
+                model=config.provider.resolved_review_model,
+                json_mode=True,
+            ),
+            timeout=config.limits.agent_timeout_seconds,
+        )
+    except (ProviderError, asyncio.TimeoutError) as exc:
+        logger.warning("Verifier failed (%s); findings pass through unadjudicated.", exc)
+        return findings, usage, AgentError(agent="verifier", message=str(exc))
+    usage.add("verifier", result.prompt_tokens, result.completion_tokens,
+              cached=result.cached_tokens)
+
+    verdicts = _parse_verifier_output(result.text)
+    if verdicts is None:
+        logger.warning("Verifier output unparseable; findings pass through unadjudicated.")
+        return findings, usage, AgentError(
+            agent="verifier", message="output did not match the expected schema"
+        )
+
+    kept: list[Finding] = []
+    rejected = 0
+    for i, finding in enumerate(findings):
+        verdict, severity = verdicts.get(i, ("confirm", None))
+        if verdict == "reject":
+            rejected += 1
+            logger.info("Verifier rejected %s finding at %s:%d.",
+                        finding.agent.value, finding.file, finding.line_start)
+            continue
+        if verdict == "downgrade" and severity is not None:
+            finding = finding.model_copy(update={"severity": severity})
+        kept.append(finding)
+    if rejected:
+        logger.info("Verifier rejected %d of %d findings.", rejected, len(findings))
+    return kept, usage, None
+
+
+def _parse_verifier_output(raw: str) -> dict[int, tuple[str, Severity | None]] | None:
+    fenced = _CODE_FENCE.search(raw)
+    data = None
+    for text in ([fenced.group(1)] if fenced else []) + [raw]:
+        for candidate in _iter_json_structures(text):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and "verdicts" in parsed:
+                data = parsed
+                break
+            if isinstance(parsed, list):  # tolerate a bare verdicts array
+                data = {"verdicts": parsed}
+                break
+        if data is not None:
+            break
+    if data is None:
+        return None
+
+    verdicts: dict[int, tuple[str, Severity | None]] = {}
+    for item in data.get("verdicts") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            finding_id = int(item["id"])
+            verdict = str(item.get("verdict", "confirm")).lower()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if verdict not in ("confirm", "reject", "downgrade"):
+            verdict = "confirm"
+        severity: Severity | None = None
+        if verdict == "downgrade":
+            try:
+                severity = Severity(str(item.get("severity", "")).lower())
+            except ValueError:
+                verdict = "confirm"  # downgrade without a valid severity = keep as-is
+        verdicts[finding_id] = (verdict, severity)
+    return verdicts
+
+
+# --------------------------------------------------------------------------
+# Describe (V2 B4) and Ask (V2 B2) — single-call tools.
+# --------------------------------------------------------------------------
+
+async def run_describe(
+    provider: LLMProvider, pr_map: str, chunks: list, config: SentinelConfig
+) -> tuple[dict | None, UsageStats]:
+    """Generate {summary, type, walkthrough} for the PR body. None on failure."""
+    usage = UsageStats()
+    diff_text = "\n\n".join(c.text for c in chunks)[:60_000]
+    user = f"{pr_map}\n\n<diff>\n{diff_text}\n</diff>"
+    try:
+        result = await asyncio.wait_for(
+            provider.complete(
+                load_prompt("describe"),
+                user,
+                max_tokens=config.limits.max_output_tokens_per_agent,
+                temperature=REVIEWER_TEMPERATURE,
+                model=config.provider.resolved_review_model,
+                json_mode=True,
+            ),
+            timeout=config.limits.agent_timeout_seconds,
+        )
+    except (ProviderError, asyncio.TimeoutError) as exc:
+        logger.warning("Describe failed: %s", exc)
+        return None, usage
+    usage.add("describe", result.prompt_tokens, result.completion_tokens,
+              cached=result.cached_tokens)
+
+    fenced = _CODE_FENCE.search(result.text)
+    for text in ([fenced.group(1)] if fenced else []) + [result.text]:
+        for candidate in _iter_json_structures(text):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and "summary" in parsed:
+                return parsed, usage
+    return None, usage
+
+
+async def run_ask(
+    provider: LLMProvider, pr_map: str, chunks: list, question: str,
+    config: SentinelConfig,
+) -> tuple[str | None, UsageStats]:
+    """Answer a maintainer's question about the diff. None on failure."""
+    from .security import sanitize_for_prompt
+
+    usage = UsageStats()
+    diff_text = "\n\n".join(c.text for c in chunks)[:60_000]
+    user = (
+        f"<question>{sanitize_for_prompt(question)[:1000]}</question>\n\n"
+        f"{pr_map}\n\n<diff>\n{diff_text}\n</diff>"
+    )
+    try:
+        result = await asyncio.wait_for(
+            provider.complete(
+                load_prompt("ask"),
+                user,
+                max_tokens=config.limits.max_output_tokens_per_agent,
+                temperature=REVIEWER_TEMPERATURE,
+                model=config.provider.resolved_review_model,
+            ),
+            timeout=config.limits.agent_timeout_seconds,
+        )
+    except (ProviderError, asyncio.TimeoutError) as exc:
+        logger.warning("Ask failed: %s", exc)
+        return None, usage
+    usage.add("ask", result.prompt_tokens, result.completion_tokens,
+              cached=result.cached_tokens)
+    return result.text.strip() or None, usage

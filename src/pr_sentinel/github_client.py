@@ -22,6 +22,8 @@ from .models import ChangedFile, PRMetadata
 logger = logging.getLogger(__name__)
 
 COMMENT_MARKER = "<!-- pr-sentinel-marker -->"
+DESCRIBE_MARKER_START = "<!-- pr-sentinel-describe-start -->"
+DESCRIBE_MARKER_END = "<!-- pr-sentinel-describe-end -->"
 # GitHub rejects issue comments longer than this.
 MAX_COMMENT_CHARS = 65_536
 
@@ -124,6 +126,74 @@ class GitHubClient:
             f"/repos/{self._repo}/issues/{pr_number}/comments",
             json={"body": body},
         )
+
+    async def get_pr(self, pr_number: int) -> dict:
+        """Fetch PR metadata — used by comment-triggered commands, where the
+        issue_comment event payload carries no PR details."""
+        response = await self._request("GET", f"/repos/{self._repo}/pulls/{pr_number}")
+        return response.json()
+
+    async def post_comment(self, pr_number: int, body: str) -> None:
+        """A plain (non-sticky) comment — used for @pr-sentinel ask replies."""
+        if len(body) > MAX_COMMENT_CHARS:
+            body = body[: MAX_COMMENT_CHARS - 80] + "\n\n*(truncated)*"
+        await self._request(
+            "POST",
+            f"/repos/{self._repo}/issues/{pr_number}/comments",
+            json={"body": body},
+        )
+
+    async def create_inline_review(
+        self, pr_number: int, commit_sha: str, comments: list[dict]
+    ) -> bool:
+        """Post one PR review whose comments anchor to diff lines (V2 B1).
+
+        Each comment: {"path": ..., "line": <new-file line>, "body": ...}.
+        Returns False on any failure — the caller falls back to keeping those
+        findings in the summary comment (fail-open, like everything else).
+        """
+        if not comments:
+            return True
+        payload = {
+            "commit_id": commit_sha,
+            "event": "COMMENT",
+            "body": "",
+            "comments": [
+                {"path": c["path"], "line": int(c["line"]), "side": "RIGHT",
+                 "body": c["body"]}
+                for c in comments
+            ],
+        }
+        try:
+            await self._request(
+                "POST", f"/repos/{self._repo}/pulls/{pr_number}/reviews", json=payload
+            )
+            return True
+        except GitHubError as exc:
+            logger.warning("Inline review failed (%s); findings stay in the summary.", exc)
+            return False
+
+    async def update_pr_description(self, pr_number: int, generated: str) -> bool:
+        """Write the generated description into the PR body BETWEEN markers,
+        never touching anything the author wrote outside them (V2 B4)."""
+        try:
+            pr = await self.get_pr(pr_number)
+            body = pr.get("body") or ""
+            block = f"{DESCRIBE_MARKER_START}\n{generated}\n{DESCRIBE_MARKER_END}"
+            if DESCRIBE_MARKER_START in body and DESCRIBE_MARKER_END in body:
+                start = body.index(DESCRIBE_MARKER_START)
+                end = body.index(DESCRIBE_MARKER_END) + len(DESCRIBE_MARKER_END)
+                new_body = body[:start] + block + body[end:]
+            else:
+                new_body = (body + "\n\n" if body.strip() else "") + block
+            await self._request(
+                "PATCH", f"/repos/{self._repo}/pulls/{pr_number}",
+                json={"body": new_body[:60_000]},
+            )
+            return True
+        except GitHubError as exc:
+            logger.warning("PR description update failed: %s", exc)
+            return False
 
     async def _find_marker_comment(self, pr_number: int, max_pages: int = 5) -> int | None:
         for page in range(1, max_pages + 1):
