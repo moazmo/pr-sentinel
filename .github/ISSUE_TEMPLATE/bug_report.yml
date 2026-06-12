@@ -1,0 +1,33 @@
+name: Bug report
+description: Something broke or behaved unexpectedly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected vs. what PR Sentinel did.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The tag you pinned (e.g. v2 or v2.1.0).
+      placeholder: "v2"
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / model
+      description: e.g. deepseek-v4-flash via api.deepseek.com, or OpenAI gpt-5-mini.
+  - type: textarea
+    id: config
+    attributes:
+      label: Your .pr-sentinel.yml (redact secrets)
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Action logs
+      description: Copy the PR Sentinel step output. The action never logs your key, but double-check before pasting.
+      render: shell

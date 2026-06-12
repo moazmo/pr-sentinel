@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/moazmo/pr-sentinel/blob/main/SECURITY.md
+    about: Please report security issues privately — see SECURITY.md, do not open a public issue.
+  - name: Feature request / idea
+    url: https://github.com/moazmo/pr-sentinel/discussions
+    about: Propose a feature or discuss an idea.

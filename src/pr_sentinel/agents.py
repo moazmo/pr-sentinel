@@ -234,6 +234,30 @@ async def run_analyst(
     return findings, usage, error
 
 
+def _reattach_attribution(reviewed: list[Finding], originals: list[Finding]) -> list[Finding]:
+    """Recover agent attribution + evidence the reviewer may have dropped (F2).
+
+    The reviewer occasionally omits `agent`/`evidence`; when a reviewed finding
+    lands on the same file and overlapping lines as an input finding, inherit
+    the original's agent, co-flaggers, support, and evidence."""
+    for r in reviewed:
+        if r.agent != AgentName.REVIEWER and r.evidence:
+            continue
+        match = next(
+            (o for o in originals if o.file == r.file and o.overlaps(r, slack=2)),
+            None,
+        )
+        if match is None:
+            continue
+        if r.agent == AgentName.REVIEWER:
+            r.agent = match.agent
+            r.also_flagged_by = list(match.also_flagged_by)
+            r.support = match.support
+        if not r.evidence:
+            r.evidence = match.evidence
+    return reviewed
+
+
 async def run_reviewer(
     provider: LLMProvider,
     pr_map: str,
@@ -292,6 +316,7 @@ async def run_reviewer(
             usage,
             AgentError(agent="reviewer", message="output did not match the expected schema"),
         )
+    findings = _reattach_attribution(findings, [f for cluster in clusters for f in cluster])
     return verdict, findings, usage, None
 
 
@@ -328,10 +353,6 @@ def _parse_reviewer_output(raw: str) -> tuple[str, list[Finding] | None]:
         except Exception:
             logger.warning("Dropped malformed finding from reviewer output.")
     return verdict, findings
-
-
-def severity_at_least(finding: Finding, threshold: Severity) -> bool:
-    return finding.severity.rank <= threshold.rank
 
 
 # --------------------------------------------------------------------------

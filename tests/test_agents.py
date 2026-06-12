@@ -234,3 +234,20 @@ class TestRunReviewer:
         )
         assert len(findings) == 1
         assert error is not None and error.agent == "reviewer"
+
+    async def test_dropped_attribution_reattached_from_input(self, config):
+        # F2: reviewer omits agent + evidence; we recover them from the input.
+        response = json.dumps({
+            "verdict": "v",
+            "findings": [{"file": "app.py", "line_start": 3, "line_end": 3,
+                          "severity": "high", "category": "sql-injection",
+                          "message": "merged"}],  # no agent, no evidence
+        })
+        cluster = [[Finding(agent="security", file="app.py", line_start=3, line_end=3,
+                            severity="high", category="sql-injection", message="m",
+                            evidence="bad = query")]]
+        verdict, findings, usage, error = await run_reviewer(
+            MockProvider(default=response), "map", cluster, config
+        )
+        assert findings[0].agent == AgentName.SECURITY  # recovered, not "reviewer"
+        assert findings[0].evidence == "bad = query"

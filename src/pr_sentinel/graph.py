@@ -21,6 +21,7 @@ V2 additions, all deterministic-first:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from langgraph.graph import END, START, StateGraph
@@ -58,17 +59,20 @@ def build_graph(
         files = apply_skip_rules(files, config)
 
         # V2 A7: extend hunks with real surrounding lines from the head ref.
-        # Failures (missing file, wrong ref) leave the original patch — extra
-        # context is an upgrade, never a requirement.
-        if github is not None and config.review.context_lines > 0 and not config.dry_run:
-            head = state["pr"].head_sha
-            for f in files:
-                if f.skipped or not f.patch or not head:
-                    continue
+        # Fetched in PARALLEL (F5) — serial round-trips were on the critical
+        # path before any analyst ran. Failures (missing file, wrong ref) leave
+        # the original patch — extra context is an upgrade, never a requirement.
+        head = state["pr"].head_sha
+        if github is not None and config.review.context_lines > 0 and not config.dry_run and head:
+            targets = [f for f in files if not f.skipped and f.patch]
+
+            async def _fetch(f):
                 try:
-                    content = await github.get_file_from_ref(f.path, head)
+                    return f, await github.get_file_from_ref(f.path, head)
                 except Exception:  # noqa: BLE001 — context is best-effort
-                    content = None
+                    return f, None
+
+            for f, content in await asyncio.gather(*(_fetch(f) for f in targets)):
                 if content:
                     f.patch = extend_patch(f.patch, content, config.review.context_lines)
 
@@ -155,6 +159,22 @@ def build_graph(
             return {"final_review": comment}
 
         findings = state.get("merged_findings", [])
+        run_usage = state.get("usage", UsageStats())
+
+        # V2 B4 (opt-in): maintain the PR description between markers. Run it
+        # BEFORE formatting so its tokens are counted in the footer (F7).
+        if config.describe and github is not None:
+            description, desc_usage = await run_describe(
+                provider, state["pr_map"], state.get("chunks", []), config
+            )
+            run_usage = run_usage.merge(desc_usage)
+            if description is not None:
+                from .formatter import format_description
+
+                await github.update_pr_description(
+                    state["pr"].number,
+                    scrub_secrets(format_description(description), secrets),
+                )
 
         # V2 B1: findings whose line is a verified `+` line become inline
         # review comments; the rest stay in the summary. Re-checked against
@@ -193,7 +213,7 @@ def build_graph(
         comment = format_review(
             summary_findings,
             files,
-            state.get("usage", UsageStats()),
+            run_usage,
             config.provider.resolved_analyst_model,
             verdict=state.get("final_review", ""),
             errors=state.get("errors", []),
@@ -204,19 +224,6 @@ def build_graph(
         comment = scrub_secrets(comment, secrets)
         if github is not None:
             await github.upsert_comment(state["pr"].number, comment)
-
-        # V2 B4 (opt-in): maintain the PR description between markers.
-        if config.describe and github is not None:
-            description, usage = await run_describe(
-                provider, state["pr_map"], state.get("chunks", []), config
-            )
-            if description is not None:
-                from .formatter import format_description
-
-                await github.update_pr_description(
-                    state["pr"].number,
-                    scrub_secrets(format_description(description), secrets),
-                )
 
         return {"final_review": comment}
 

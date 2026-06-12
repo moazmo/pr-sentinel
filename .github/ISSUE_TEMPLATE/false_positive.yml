@@ -1,0 +1,32 @@
+name: False positive / noisy finding
+description: PR Sentinel flagged something that wasn't a real issue
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        False positives are the metric we care about most. A good report here
+        often becomes a new clean-fixture in our eval suite — thank you.
+  - type: textarea
+    id: finding
+    attributes:
+      label: The finding it raised
+      description: Which agent, what message, what file/line.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it's not a real issue
+    validations:
+      required: true
+  - type: textarea
+    id: snippet
+    attributes:
+      label: The code it flagged (a minimal snippet is ideal)
+      render: text
+  - type: input
+    id: model
+    attributes:
+      label: Model used
+      placeholder: "deepseek-v4-flash"

@@ -3,7 +3,7 @@
 #      so the tag -> source mapping stays auditable)
 #   2. rewrite action.yml on the tag to reference the prebuilt image
 #      (users pull in seconds instead of building Docker at PR time)
-#   3. move the moving major tag (v1) so `@v1` users get patches free
+#   3. move the moving major tag (e.g. v2) so `@v2` users get patches free
 name: Release
 
 on:

@@ -1,0 +1,20 @@
+# Dogfooding (F14): PR Sentinel reviews its own pull requests.
+# If it can't usefully review its own code, that's a signal worth catching.
+# Needs the PR_SENTINEL_API_KEY repo secret.
+name: Self-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: moazmo/pr-sentinel@v2
+        with:
+          api_key: ${{ secrets.PR_SENTINEL_API_KEY }}

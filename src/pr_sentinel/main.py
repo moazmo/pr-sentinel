@@ -227,6 +227,7 @@ async def _run() -> int:
         close = getattr(provider, "aclose", None)
         if close is not None:
             await close()
+        await github.aclose()
     return 0
 
 

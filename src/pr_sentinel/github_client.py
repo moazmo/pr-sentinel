@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 
@@ -32,6 +33,10 @@ class GitHubError(Exception):
     pass
 
 
+_GH_RETRYABLE = {429, 500, 502, 503, 504}
+_GH_MAX_ATTEMPTS = 3
+
+
 class GitHubClient:
     def __init__(self, token: str, repo: str, api_url: str = "https://api.github.com") -> None:
         self._repo = repo
@@ -41,16 +46,44 @@ class GitHubClient:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        # One pooled connection per client (F6) — pagination, comment listing,
+        # inline review and description updates shouldn't each pay a handshake.
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.request(
-                method, f"{self._api_url}{path}", headers=self._headers, **kwargs
-            )
-        if response.status_code >= 400:
-            # Never echo response bodies blindly — keep error surface small.
-            raise GitHubError(f"GitHub API {method} {path} -> HTTP {response.status_code}")
-        return response
+        url = f"{self._api_url}{path}"
+        last_status = 0
+        for attempt in range(1, _GH_MAX_ATTEMPTS + 1):
+            try:
+                response = await self._get_client().request(
+                    method, url, headers=self._headers, **kwargs
+                )
+            except httpx.HTTPError as exc:
+                # Transient transport error — retry a couple of times (F8).
+                if attempt < _GH_MAX_ATTEMPTS:
+                    await asyncio.sleep(2 ** (attempt - 1))
+                    continue
+                raise GitHubError(f"GitHub API {method} {path} -> {type(exc).__name__}") from exc
+            if response.status_code < 400:
+                return response
+            last_status = response.status_code
+            # Retry secondary-rate-limit / transient 5xx (F8); honor Retry-After.
+            if response.status_code in _GH_RETRYABLE and attempt < _GH_MAX_ATTEMPTS:
+                delay = float(response.headers.get("retry-after") or 2 ** (attempt - 1))
+                await asyncio.sleep(min(delay, 10.0))
+                continue
+            break
+        # Never echo response bodies blindly — keep error surface small.
+        raise GitHubError(f"GitHub API {method} {path} -> HTTP {last_status}")
 
     async def list_pr_files(self, pr_number: int, max_pages: int = 10) -> list[ChangedFile]:
         """All changed files, paginated 100 at a time.

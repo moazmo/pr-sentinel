@@ -104,3 +104,21 @@ def test_dry_run_comment_estimates_without_llm():
     assert "19.0k input tokens" in comment
     assert "No LLM calls were made" in comment
     assert COMMENT_MARKER in comment
+
+
+def test_cap_collapse_with_verdict_and_inline_keeps_marker_and_severity(monkeypatch):
+    # F1 regression: a verdict quote + inline index sit before the severity
+    # sections; the cap-collapse rebuild must not mis-slice and drop them.
+    import pr_sentinel.formatter as fmt
+
+    monkeypatch.setattr(fmt, "MAX_COMMENT_CHARS", 2000)
+    findings = [make(severity="high", start=i, category=f"c{i}", message="y" * 200)
+                for i in range(20)]
+    inline = [make(severity="critical", start=500, category="inl", message="z")]
+    comment = format_review(
+        findings, [], usage_with(), "gpt-5-mini",
+        verdict="A verdict sentence.", inline_findings=inline,
+    )
+    assert len(comment) <= 2000
+    assert COMMENT_MARKER in comment
+    assert comment.startswith("## 🛡️ PR Sentinel Review")

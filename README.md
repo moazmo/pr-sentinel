@@ -5,6 +5,8 @@
 [![CI](https://github.com/moazmo/pr-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/moazmo/pr-sentinel/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![evals 49/51](https://img.shields.io/badge/evals-49%2F51%20%C2%B7%200%20false%20positives-brightgreen.svg)](#accuracy-is-a-systems-problem-not-a-model-size-problem)
+[![cost ~$0.005/review](https://img.shields.io/badge/cost-~%240.005%2Freview-blue.svg)](#what-it-costs)
 
 ![PR Sentinel reviewing a pull request](assets/demo.gif)
 

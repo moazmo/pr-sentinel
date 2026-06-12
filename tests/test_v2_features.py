@@ -24,6 +24,16 @@ class TestFileRanking:
     def test_tests_downweighted_vs_source(self):
         assert file_priority(cf("test_app.py")) < file_priority(cf("app.py", adds=10))
 
+    def test_test_path_detection_is_not_substring(self):
+        # F9: 'latest'/'contest' contain 'test' but are not test files.
+        from pr_sentinel.chunking import _is_test_path
+
+        assert _is_test_path("tests/test_app.py")
+        assert _is_test_path("app/foo_test.go")
+        assert _is_test_path("web/app.test.ts")
+        assert not _is_test_path("services/latest_handler.py")
+        assert not _is_test_path("game/contest.py")
+
     def test_more_churn_ranks_higher(self):
         assert file_priority(cf("a.py", adds=200)) > file_priority(cf("b.py", adds=2))
 

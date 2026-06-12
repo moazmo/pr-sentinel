@@ -1,7 +1,7 @@
 name: "PR Sentinel Multi-Agent Reviewer"
 description: >-
-  Five LLM agents review each pull request and post one prioritized comment.
-  Runs in your CI, bring your own key.
+  Specialized LLM agents review each pull request and post one prioritized
+  comment. Runs in your CI, bring your own key.
 author: "Moaz Muhammad"
 
 branding:

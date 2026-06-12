@@ -204,7 +204,29 @@ def format_review(
     parts.append(_footer(usage, model, agents_run))
     parts.append(COMMENT_MARKER)
 
-    return _enforce_limit(parts, by_severity, files, usage, model, agents_run)
+    comment = "\n\n".join(parts)
+    if len(comment) <= MAX_COMMENT_CHARS:
+        return comment
+    return _enforce_limit(
+        head=parts[: _severity_start_index(parts, by_severity)],
+        by_severity=by_severity,
+        tail=parts[_severity_start_index(parts, by_severity) + len(by_severity):],
+        usage=usage,
+        model=model,
+        agents_run=agents_run,
+    )
+
+
+def _severity_start_index(parts: list[str], by_severity: dict) -> int:
+    """Index of the first severity section in `parts` — found by its `###`/
+    `<details>` header, not by a fragile fixed offset (F1)."""
+    if not by_severity:
+        return len(parts)
+    first_header = _SEVERITY_HEADER[next(iter(by_severity))]
+    for i, p in enumerate(parts):
+        if first_header in p and (p.startswith("###") or p.startswith("<details>")):
+            return i
+    return len(parts)
 
 
 def format_failure(reason: str) -> str:
@@ -242,27 +264,30 @@ def format_dry_run(
 
 
 def _enforce_limit(
-    parts: list[str],
+    *,
+    head: list[str],
     by_severity: dict[Severity, list[Finding]],
-    files: list[ChangedFile],
+    tail: list[str],
     usage: UsageStats,
     model: str,
     agents_run: int,
 ) -> str:
-    comment = "\n\n".join(parts)
-    if len(comment) <= MAX_COMMENT_CHARS:
-        return comment
+    """Bring an over-long comment under GitHub's 65,536-char cap by first
+    collapsing every severity section into <details>, then hard-truncating.
 
-    # Pass 1: collapse every severity section.
-    collapsed_parts = [parts[0], parts[1]]
+    Rebuilt from the structured head/sections/tail (F1) rather than slicing the
+    flat parts list — so an optional verdict quote or inline-comment index in
+    the head can't shift the offsets and drop the wrong block.
+    """
+    collapsed = list(head)
     for severity, group in by_severity.items():
-        collapsed_parts.append(_severity_section(severity, group, collapsed=True))
-    collapsed_parts.extend(parts[2 + len(by_severity):])
-    comment = "\n\n".join(collapsed_parts)
+        collapsed.append(_severity_section(severity, group, collapsed=True))
+    collapsed.extend(tail)
+    comment = "\n\n".join(collapsed)
     if len(comment) <= MAX_COMMENT_CHARS:
         return comment
 
-    # Pass 2: hard truncate, keep marker + pointer to logs.
+    # Hard truncate, keeping marker + footer + a pointer to the logs.
     suffix = (
         "\n\n*(review truncated — full output in the Action logs)*\n\n---\n"
         f"{_footer(usage, model, agents_run)}\n\n{COMMENT_MARKER}"

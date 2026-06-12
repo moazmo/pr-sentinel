@@ -66,8 +66,10 @@ def fake(monkeypatch):
 
 
 @pytest.fixture
-def client():
-    return GitHubClient("test-token", "octo/demo")
+async def client():
+    c = GitHubClient("test-token", "octo/demo")
+    yield c
+    await c.aclose()  # close the pooled client so it isn't GC'd across loops
 
 
 class TestListFiles:

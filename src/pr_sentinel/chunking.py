@@ -33,6 +33,15 @@ _SOURCE_EXTENSIONS = {
 }
 
 
+_TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__)/|(^|/)test_|[._]test\.|[._]spec\.")
+
+
+def _is_test_path(path: str) -> bool:
+    """True for real test files — segment/affix patterns, not a bare 'test'
+    substring (which mis-tags `latest_handler.py`, `contest.py`) (F9)."""
+    return bool(_TEST_PATH.search(path))
+
+
 def file_priority(f: ChangedFile) -> float:
     """Ranking score for the max_files cap (V2 B3): when a PR exceeds the cap,
     keep the files where review matters most. Source > config > docs; bigger
@@ -40,7 +49,7 @@ def file_priority(f: ChangedFile) -> float:
     path = f.path.lower()
     ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
     if ext in _SOURCE_EXTENSIONS:
-        weight = 1.0 if "test" not in path else 0.6
+        weight = 0.6 if _is_test_path(path) else 1.0
     elif ext in (".yml", ".yaml", ".toml", ".json", ".tf"):
         weight = 0.5
     else:
