@@ -13,9 +13,13 @@ updates:
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
-  # Base image in the Dockerfile
+  # Base image in the Dockerfile. We deliberately target Python 3.12, so ignore
+  # major/minor bumps of the python base image (still get digest/patch updates).
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
