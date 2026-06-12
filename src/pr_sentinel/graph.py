@@ -36,9 +36,51 @@ from .merge import merge_findings
 from .models import AgentName, ReviewState, UsageStats
 from .provider import LLMProvider
 from .security import scrub_secrets
+from .suppression import apply_suppressions
 from .verification import anchor_findings
 
 logger = logging.getLogger(__name__)
+
+
+async def _publish_check_run(github, state, config, findings, secrets) -> None:
+    """Post a Check Run whose conclusion gates the merge when findings reach
+    the configured severity (V2 P2). Fail-open: a check error never aborts."""
+    from .models import Severity
+
+    try:
+        gate = Severity(config.gate.level.lower())
+    except ValueError:
+        return
+    blocking = [f for f in findings if f.severity.rank <= gate.rank]
+    conclusion = "failure" if blocking else "success"
+    title = (
+        f"{len(blocking)} blocking finding(s) at or above {gate.value}"
+        if blocking else "No blocking findings"
+    )
+    summary_lines = [
+        f"PR Sentinel found {len(findings)} finding(s); {len(blocking)} at or above "
+        f"`{gate.value}` (the merge gate)."
+    ]
+    for f in blocking[:20]:
+        summary_lines.append(f"- `{f.file}:{f.line_start}` — {f.severity.value}: {f.message}")
+    annotations = [
+        {
+            "path": f.file,
+            "start_line": max(1, f.line_start),
+            "end_line": max(f.line_start, f.line_end),
+            "annotation_level": "failure" if f.severity.rank <= gate.rank else "warning",
+            "message": scrub_secrets(f.message, secrets),
+            "title": f"{f.severity.value}: {f.category}",
+        }
+        for f in findings if f.line_start > 0
+    ]
+    await github.create_check_run(
+        state["pr"].head_sha,
+        conclusion=conclusion,
+        title=title,
+        summary=scrub_secrets("\n".join(summary_lines), secrets),
+        annotations=annotations,
+    )
 
 
 def build_graph(
@@ -57,6 +99,27 @@ def build_graph(
             assert github is not None, "no files in state and no GitHub client"
             files = await github.list_pr_files(state["pr"].number)
         files = apply_skip_rules(files, config)
+
+        # V2 P3: incremental review — on a re-review, skip files unchanged since
+        # the last reviewed commit so we don't re-flag (and re-bill) settled
+        # code. Fail-open: any problem reverts to a full review.
+        if (
+            github is not None and config.review.incremental and not config.dry_run
+            and state["pr"].head_sha
+        ):
+            last_sha = await github.last_reviewed_sha(state["pr"].number)
+            if last_sha and last_sha != state["pr"].head_sha:
+                changed = await github.compare_changed_paths(last_sha, state["pr"].head_sha)
+                if changed is not None:
+                    n = 0
+                    for f in files:
+                        if not f.skipped and f.path not in changed:
+                            f.skipped = True
+                            f.skip_reason = "unchanged since the last review (incremental)"
+                            n += 1
+                    if n:
+                        logger.info("Incremental: skipped %d file(s) unchanged since %s.",
+                                    n, last_sha[:7])
 
         # V2 A7: extend hunks with real surrounding lines from the head ref.
         # Fetched in PARALLEL (F5) — serial round-trips were on the critical
@@ -97,11 +160,16 @@ def build_graph(
 
     def merge_node(state: ReviewState) -> dict:
         config: SentinelConfig = state["config"]
+        files = state.get("files", [])
         # V2 A2: evidence anchoring BEFORE dedup — every finding that survives
         # this line points at code that literally exists in the diff.
-        anchored, dropped = anchor_findings(state.get("findings", []), state.get("files", []))
+        anchored, dropped = anchor_findings(state.get("findings", []), files)
         if dropped:
             logger.info("Evidence anchoring dropped %d unverifiable finding(s).", dropped)
+        # V2 P4: author-controlled suppression (config globs + inline markers).
+        anchored, suppressed = apply_suppressions(anchored, files, config.review.suppress)
+        if suppressed:
+            logger.info("Suppressed %d finding(s) per config/inline markers.", suppressed)
         merged, clusters = merge_findings(anchored, config.min_severity)
         return {"merged_findings": merged, "_clusters": clusters}
 
@@ -197,7 +265,9 @@ def build_graph(
                 {
                     "path": f.file,
                     "line": f.line_start,
-                    "body": scrub_secrets(format_inline_body(f), secrets),
+                    "body": scrub_secrets(
+                        format_inline_body(f, suggestions=config.output.suggestions), secrets
+                    ),
                 }
                 for f in inline_findings
             ]
@@ -221,9 +291,16 @@ def build_graph(
             agents_run=agents_run,
             inline_findings=inline_findings,
         )
+        # Embed the reviewed head SHA so the next run can review incrementally.
+        if state["pr"].head_sha:
+            comment += f"\n<!-- pr-sentinel-sha:{state['pr'].head_sha} -->"
         comment = scrub_secrets(comment, secrets)
         if github is not None:
             await github.upsert_comment(state["pr"].number, comment)
+
+        # V2 P2: optional Check Run for the Files tab + merge gating.
+        if github is not None and config.gate.level != "off":
+            await _publish_check_run(github, state, config, findings, secrets)
 
         return {"final_review": comment}
 

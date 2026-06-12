@@ -95,12 +95,26 @@ def _footer(usage: UsageStats, model: str, agents_run: int) -> str:
     )
 
 
-def format_inline_body(finding: Finding) -> str:
-    """The body of one inline review comment (V2 B1)."""
+def format_inline_body(finding: Finding, *, suggestions: bool = True) -> str:
+    """The body of one inline review comment (V2 B1).
+
+    When the finding carries a literal `fix` and suggestions are enabled, the
+    fix is rendered as a GitHub ```suggestion block (V2 P1) — the author clicks
+    "Commit suggestion" to apply it. Prose `suggestion` is shown otherwise.
+    """
     severity = _SEVERITY_HEADER[finding.severity]
     body = f"**{severity}** · [{_attribution(finding)}] {finding.message}"
-    if finding.suggestion:
+    # A suggestion block replaces the single anchored line, so only offer it for
+    # single-line findings whose fix is itself one line — otherwise the apply
+    # would mangle the file. Anything else falls back to prose.
+    single_line = finding.line_start == finding.line_end
+    fix_one_line = finding.fix and "\n" not in finding.fix.strip()
+    if suggestions and single_line and fix_one_line:
+        body += f"\n\n```suggestion\n{finding.fix.rstrip()}\n```"
+    elif finding.suggestion:
         body += f"\n\n**Suggested fix:** {finding.suggestion}"
+    elif finding.fix:
+        body += f"\n\n**Suggested fix:**\n```\n{finding.fix.rstrip()}\n```"
     return body + "\n\n<sub>🛡️ PR Sentinel</sub>"
 
 

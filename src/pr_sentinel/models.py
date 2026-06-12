@@ -56,6 +56,10 @@ class Finding(BaseModel):
     category: str = Field(min_length=1, max_length=80)
     message: str = Field(min_length=1, max_length=2000)
     suggestion: str | None = Field(default=None, max_length=2000)
+    # Literal replacement code for the evidence line(s) (V2 P1). When present
+    # and the finding anchors to a single added line, it becomes a one-click
+    # GitHub ```suggestion block. Distinct from `suggestion` (prose).
+    fix: str | None = Field(default=None, max_length=2000)
     # The exact offending line quoted from the diff (V2). Verification drops
     # any finding whose evidence does not literally exist in the patch.
     evidence: str | None = Field(default=None, max_length=500)

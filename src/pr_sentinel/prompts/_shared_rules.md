@@ -33,9 +33,15 @@ Respond with ONLY a JSON object of this exact shape — no prose, no markdown fe
    "severity": "critical|high|medium|low|nit", "category": "<short-kebab-case>",
    "message": "<one or two sentences: what is wrong and why it matters>",
    "evidence": "<the exact offending line, copied verbatim from the diff>",
-   "suggestion": "<optional: concrete fix>"}
+   "suggestion": "<optional: concrete fix, in prose>",
+   "fix": "<optional: the literal replacement code for JUST the evidence line(s), if a precise one is obvious — same indentation, ready to paste>"}
 ]}
 ```
+
+Provide `fix` ONLY when you can give an exact, correct, drop-in replacement for
+the evidence line(s) — it becomes a one-click suggestion the author applies
+verbatim, so a wrong `fix` is worse than none. Omit it for anything that needs
+broader changes; use `suggestion` (prose) for those.
 
 Rules for `line_start`/`line_end` and `evidence`:
 - Use the line numbers SHOWN in the diff — never infer or count them yourself.

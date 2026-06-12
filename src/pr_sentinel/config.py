@@ -84,12 +84,32 @@ class ReviewConfig(BaseModel):
     # Extra context lines fetched from the head ref around each hunk (V2 A7).
     # 0 disables the extra contents-API calls entirely.
     context_lines: int = Field(default=8, ge=0, le=25)
+    # Review only changes since the last review on `synchronize` (V2 P3).
+    incremental: bool = True
+    # Permanently silence findings (V2 P4). Each entry is "<path-glob>" or
+    # "<path-glob>:<category-glob>", e.g. "legacy/**" or "api/*.py:nit".
+    suppress: list[str] = Field(default_factory=list)
 
 
 class OutputConfig(BaseModel):
     # Post findings as inline review comments anchored to diff lines (V2 B1);
     # unanchorable findings stay in the summary comment either way.
     inline: bool = True
+    # Render concrete one-line fixes as GitHub ```suggestion blocks (V2 P1).
+    suggestions: bool = True
+    # Submit the inline review as REQUEST_CHANGES when an unresolved finding is
+    # at/above this severity; "" disables (V2 P7). critical|high|medium|...
+    request_changes_at: str = ""
+    # Apply PR labels derived from findings (V2 P8).
+    labels: bool = False
+
+
+class GateConfig(BaseModel):
+    """Merge-gating via a GitHub Check Run (V2 P2). The check fails when an
+    unresolved finding is at/above `level`; "off" never fails the check."""
+
+    # off | critical | high | medium | low | nit
+    level: str = "off"
 
 
 class SentinelConfig(BaseModel):
@@ -101,9 +121,26 @@ class SentinelConfig(BaseModel):
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    gate: GateConfig = Field(default_factory=GateConfig)
     # Maintain a PR description between markers in the PR body (V2 B4).
     describe: bool = False
     dry_run: bool = False
+    # One-liner preset that sets accuracy knobs (V2 P6): fast|balanced|thorough.
+    mode: str = ""
+
+    def model_post_init(self, _ctx) -> None:
+        """A preset (`mode`) is a low-friction front-end over the accuracy
+        block and wins over individual accuracy knobs when set — use one or
+        the other, not both."""
+        if self.mode == "fast":
+            self.accuracy.samples = 1
+            self.accuracy.min_support = 1
+            self.accuracy.verifier = False
+        elif self.mode == "thorough":
+            self.accuracy.samples = 3
+            self.accuracy.min_support = 2
+            self.accuracy.verifier = True
+        # "balanced" / "" keep the defaults (samples=3, verifier on).
 
     # Not user-facing config; carries parse warnings into the final comment.
     warnings: list[str] = Field(default_factory=list)

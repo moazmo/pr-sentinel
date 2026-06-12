@@ -255,6 +255,8 @@ def _reattach_attribution(reviewed: list[Finding], originals: list[Finding]) -> 
             r.support = match.support
         if not r.evidence:
             r.evidence = match.evidence
+        if not r.fix:
+            r.fix = match.fix
     return reviewed
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 
 import httpx
 
@@ -143,7 +144,7 @@ class GitHubClient:
             # The formatter already enforces this; belt and suspenders.
             body = body[: MAX_COMMENT_CHARS - 80] + "\n\n*(truncated — see Action logs)*"
 
-        existing_id = await self._find_marker_comment(pr_number)
+        existing_id, _ = await self._find_marker_comment(pr_number, with_body=True)
         if existing_id is not None:
             try:
                 await self._request(
@@ -165,6 +166,51 @@ class GitHubClient:
         issue_comment event payload carries no PR details."""
         response = await self._request("GET", f"/repos/{self._repo}/pulls/{pr_number}")
         return response.json()
+
+    async def compare_changed_paths(self, base_sha: str, head_sha: str) -> set[str] | None:
+        """Paths changed between two commits (V2 P3 incremental review).
+        Returns None on failure so the caller falls back to a full review."""
+        try:
+            response = await self._request(
+                "GET", f"/repos/{self._repo}/compare/{base_sha}...{head_sha}"
+            )
+        except GitHubError:
+            return None
+        data = response.json()
+        return {f["filename"] for f in data.get("files", [])}
+
+    async def last_reviewed_sha(self, pr_number: int) -> str | None:
+        """The head SHA stored in the previous review comment's hidden marker
+        (V2 P3). None when there's no prior review."""
+        comment_id, body = await self._find_marker_comment(pr_number, with_body=True)
+        if not body:
+            return None
+        match = re.search(r"<!-- pr-sentinel-sha:([0-9a-f]{7,40}) -->", body)
+        return match.group(1) if match else None
+
+    async def create_check_run(
+        self, head_sha: str, *, conclusion: str, title: str, summary: str,
+        annotations: list[dict] | None = None,
+    ) -> bool:
+        """Post a Check Run (V2 P2) so results show in the Checks tab and can
+        gate merges when made a required check. `conclusion` is success/failure/
+        neutral. Returns False on failure (needs `checks: write`; fail-open)."""
+        output: dict = {"title": title[:255], "summary": summary[:65000]}
+        if annotations:
+            output["annotations"] = annotations[:50]  # GitHub caps at 50/request
+        payload = {
+            "name": "PR Sentinel",
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "output": output,
+        }
+        try:
+            await self._request("POST", f"/repos/{self._repo}/check-runs", json=payload)
+            return True
+        except GitHubError as exc:
+            logger.warning("Check run failed (%s) — needs `checks: write`.", exc)
+            return False
 
     async def post_comment(self, pr_number: int, body: str) -> None:
         """A plain (non-sticky) comment — used for @pr-sentinel ask replies."""
@@ -228,7 +274,11 @@ class GitHubClient:
             logger.warning("PR description update failed: %s", exc)
             return False
 
-    async def _find_marker_comment(self, pr_number: int, max_pages: int = 5) -> int | None:
+    async def _find_marker_comment(
+        self, pr_number: int, max_pages: int = 5, with_body: bool = False
+    ) -> tuple[int | None, str | None]:
+        """Locate our sticky comment by its hidden marker. Returns (id, body);
+        body is only populated when `with_body` is set."""
         for page in range(1, max_pages + 1):
             response = await self._request(
                 "GET",
@@ -237,11 +287,12 @@ class GitHubClient:
             )
             batch = response.json()
             for comment in batch:
-                if COMMENT_MARKER in (comment.get("body") or ""):
-                    return int(comment["id"])
+                body = comment.get("body") or ""
+                if COMMENT_MARKER in body:
+                    return int(comment["id"]), (body if with_body else None)
             if len(batch) < 100:
-                return None
-        return None
+                return None, None
+        return None, None
 
 
 def pr_metadata_from_event(event: dict, repo: str) -> PRMetadata:
