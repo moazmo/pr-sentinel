@@ -6,7 +6,7 @@ PR Sentinel is a multi-agent code-review GitHub Action: five LLM agents (Archite
 
 ```bash
 pip install -e ".[dev]"        # setup (use a venv)
-pytest                         # 163 tests — LLM and GitHub API fully mocked, no network, no key
+pytest                         # 200 tests — LLM and GitHub API fully mocked, no network, no key
 ruff check src tests evals     # lint (line length 100)
 python evals/run.py --runs 3 --label flash-v2   # evals — REAL LLM; needs PR_SENTINEL_API_KEY
                                # env knobs: PR_SENTINEL_{BASE_URL,MODEL,SAMPLES,VERIFIER,
@@ -21,10 +21,11 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | File | Owns |
 |---|---|
 | `src/pr_sentinel/models.py` | **Finding schema — the single source of truth** (incl. `evidence`, `support`) — plus ReviewState |
-| `src/pr_sentinel/graph.py` | Pipeline: ingest → 4 parallel analysts (×3 samples) → merge (vote+anchor) → verifier → reviewer → publish |
+| `src/pr_sentinel/graph.py` | Pipeline: ingest → 4 parallel analysts (×3 adaptive samples) → merge (vote+anchor+suppress) → verifier → cross_file → reviewer → publish (inline+suggestions, check-run, labels, sticky+incremental SHA) |
 | `src/pr_sentinel/agents.py` | Analyst/reviewer/verifier/describe/ask runtime, prompt assembly, balanced-bracket JSON extraction |
 | `src/pr_sentinel/diffmap.py` | **V2:** parse patches → numbered hunks, line maps, added-line sets, context extension (pure) |
 | `src/pr_sentinel/verification.py` | **V2:** evidence anchoring — drop findings whose quote isn't in the diff (pure) |
+| `src/pr_sentinel/suppression.py` | **V2.1:** drop findings by config glob or inline `pr-sentinel: ignore` marker (pure) |
 | `src/pr_sentinel/prompts/*.md` | Agent system prompts — **product surface**, readable markdown |
 | `src/pr_sentinel/merge.py` | Deterministic dedup/clustering + self-consistency `vote_findings` — pure, most-tested code |
 | `src/pr_sentinel/provider.py` | Thin OpenAI-compat + native Anthropic clients; the ONLY place secrets live; json-mode, pooled client |
@@ -34,7 +35,7 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | `src/pr_sentinel/security.py` | Prompt sanitizer + output secret scrubbing |
 | `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch); accuracy/output blocks |
 | `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0; `@pr-sentinel` command dispatch (author-association gated) |
-| `tests/` | 163 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config |
+| `tests/` | 200 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
 | `evals/` | 17 fixtures (5 languages, hard negatives, 2 injection vectors); `run.py` env-driven leaderboard runner |
 
 ## Invariants — never break these
@@ -52,6 +53,8 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 11. **Evidence anchoring only ever removes findings.** `verification.py` widens *extraction* of model output, never *acceptance* — a finding still must validate against `Finding` and quote a real diff line. Don't loosen the anchor check to make a fixture pass.
 12. **The verifier and context extension fail open.** A verifier error passes findings through unadjudicated; a context-fetch error keeps the raw hunk. Never let either abort the review.
 13. **Comment commands are author-association gated.** `@pr-sentinel` commands run only for OWNER/MEMBER/COLLABORATOR. Never widen this — it's the economic-DoS guard on the comment surface.
+14. **Suppression and custom instructions come from the base branch.** `review.suppress`, `agents.guidance`, `agents.instructions` are config — a hostile PR must never be able to suppress its own findings or inject prompt instructions. Inline `pr-sentinel: ignore` markers are the one exception (they live in the diff, on the line they silence, and only silence that spot).
+15. **One-click fixes only for single-line replacements.** A suggestion block replaces the anchored line; never emit one for a multi-line `fix`. The `fix` must survive anchoring + verifier before it's offered.
 
 ## Conventions
 

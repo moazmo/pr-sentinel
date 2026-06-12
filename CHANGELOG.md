@@ -2,16 +2,25 @@
 
 All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags.
 
-## [Unreleased]
+## [2.1.0] — 2026-06-12
 
-### Added
-- Dependabot (pip, github-actions, docker), issue/PR templates, self-review (dogfood) workflow.
+### Added — adoption features (all $0; you bring the key)
+- **One-click fix suggestions:** findings with a precise `fix` render as GitHub ```suggestion blocks.
+- **Merge gating:** `gate.level` posts a Check Run that fails at/above a severity, so reviews can be required.
+- **Incremental review:** on a re-review, only files changed since the last review are re-examined.
+- **Finding suppression:** `review.suppress` globs and inline `pr-sentinel: ignore[category]` markers.
+- **Custom guidance:** `agents.guidance` / `agents.instructions` (base-branch only).
+- **Presets:** `mode: fast | balanced | thorough`.
+- **Risk labels** (`output.labels`), **REQUEST_CHANGES** (`output.request_changes_at`), **merge-readiness/effort score**, **confidence display** (ensemble agreement).
+- **Adaptive sampling** (`accuracy.adaptive`, default on): ~40% fewer calls on clean code.
+- **Cross-file pass** (`accuracy.cross_file`, opt-in): catches stale-caller / signature-mismatch issues.
+- Repo health: Dependabot, issue/PR templates, CODE_OF_CONDUCT, CHANGELOG, self-review (dogfood) workflow, digest-pinned base image, README badges.
 
 ### Fixed
-- Pooled the GitHub API client (one connection instead of one per request) and added retry/backoff on transient GitHub errors.
-- Context-line extension now fetches file contents in parallel instead of serially.
+- Pooled the GitHub API client (one connection, not one per request) + retry/backoff on transient GitHub errors.
+- Context-line extension fetches file contents in parallel, not serially.
 - Reworked the >65k-char comment cap so an optional verdict/inline index can't mis-slice the collapse.
-- Reviewer findings recover dropped agent attribution and evidence from the input.
+- Reviewer findings recover dropped agent attribution / evidence / fix from the input.
 - File-priority test detection uses path patterns, not a bare `test` substring.
 
 ## [2.0.1] — 2026-06-11

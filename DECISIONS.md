@@ -91,3 +91,41 @@ The action also handles `issue_comment` events. `review` re-runs the pipeline; `
 ## D20 — Published model × strategy leaderboard
 
 The eval harness (`evals/run.py`) runs configurable strategies (samples, verifier, models via env) over a 17-fixture, 5-language set with hard negatives, and prints a labelled, cost-annotated table. The headline artifact: the same $0.14/M model goes from a naive single pass to the ensemble+verifier system, measured, with false-positive rates published. Honest numbers whatever they say — fixtures are never tuned to pass.
+
+---
+
+# V2.1 decisions (adoption features — all $0, user brings the key)
+
+These convert "an accurate reviewer" into "a reviewer teams adopt and keep". Each is opt-in or a backward-compatible default; nothing changes the security or fail-open invariants.
+
+## D21 — One-click fix suggestions
+
+Findings carry an optional `fix` field (literal replacement code, distinct from prose `suggestion`). When a finding anchors to a single added line and its fix is one line, `format_inline_body` renders a GitHub ```suggestion block the author applies in one click. Gated to single-line replacements because a suggestion replaces the anchored line — a multi-line fix could mangle the file; those fall back to a fenced prose block. The fix only ships when it survives evidence anchoring + the verifier, so a wrong one-click fix is unlikely. Competitors gate this behind paid tiers; it's free here because the user's key does the work.
+
+## D22 — Check Run + merge gating
+
+`gate.level` (default `off`) posts a GitHub Check Run whose conclusion *fails* when an unresolved finding meets the severity, with per-line annotations in the Files tab. Teams make it a required status check to block risky merges — turning an advisory comment into enforceable infrastructure. Off by default so PR Sentinel never surprises anyone by failing their PR; needs `checks: write` only when enabled. Fail-open like everything else.
+
+## D23 — Incremental review
+
+On a re-review, the reviewed head SHA is embedded in the sticky comment's hidden marker; the next run compares `last_sha...head` and skips files unchanged since, so settled code isn't re-flagged or re-billed. Default on (`review.incremental`). The biggest real-world complaint about AI reviewers — "it keeps re-flagging the same thing on every push" — closed deterministically. Fail-open: any compare failure reverts to a full review.
+
+## D24 — Finding suppression
+
+Two escape hatches for residual false positives (the retention metric): config globs (`review.suppress: ["legacy/**", "api/*.py:nit"]`) and inline `pr-sentinel: ignore[category]` markers in the diff. Both pure functions, applied after anchoring. Config suppression is read from the base branch (a hostile PR can't suppress its own findings). A reviewer you can't quiet gets uninstalled; this is what keeps it.
+
+## D25 — Custom per-repo instructions + presets
+
+`agents.guidance` / `agents.instructions` append maintainer guidance to analyst prompts (from the base branch — same anti-injection property as config). `mode: fast|balanced|thorough` is a one-liner preset over the accuracy knobs for low-friction adoption. The customization-parity feature competitors lean on, without the config sprawl.
+
+## D26 — Adaptive sampling
+
+`accuracy.adaptive` (default on) spends one sample per chunk and only draws the remaining samples on chunks that found something — clean code is the common case and doesn't need a vote. ~40% fewer calls at the same catch rate, deepening the cost moat. The vote semantics are unchanged on chunks that do re-sample.
+
+## D27 — Opt-in cross-file pass
+
+`accuracy.cross_file` adds one final pass (`agents.run_cross_file`) that sees all changed files and flags the cross-file issues per-file review structurally misses — a stale caller after a signature change, a renamed symbol still referenced elsewhere. Its findings go through the same anchoring + suppression as any other. Closes the one real weakness of the per-file strategy (D7), as an opt-in extra call rather than a default cost.
+
+## D28 — Review event, risk labels, readiness score
+
+`output.request_changes_at` submits the review as REQUEST_CHANGES at a chosen severity (a real review signal, not just a comment). `output.labels` applies risk labels (`security`/`needs-tests`/…) for triage (needs `issues: write`). A deterministic merge-readiness (0–100) and review-effort (1–5) line in the summary — computed from finding counts/severities, no extra LLM call. The ensemble's `support` count surfaces as a per-finding confidence signal nobody else shows.

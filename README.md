@@ -102,6 +102,7 @@ Large PRs: files are fetched via the paginated files API (the only endpoint that
 Optional `.pr-sentinel.yml` at the repo root — zero config works out of the box. All fields and their defaults:
 
 ```yaml
+mode: ""                      # preset: fast | balanced | thorough (overrides the accuracy block)
 provider:
   base_url: https://api.openai.com/v1     # any OpenAI-compatible endpoint
   model: gpt-5-mini
@@ -111,10 +112,14 @@ provider:
   review_model: ""                        # optional: model for verifier + reviewer
 agents:
   enabled: [architect, security, performance, test]   # reviewer always runs
+  guidance: ""                # repo-specific guidance appended to every analyst, e.g. "Django project"
+  instructions: {}            # per-agent guidance, e.g. {architect: "we use hexagonal architecture"}
 accuracy:
   samples: 3                  # self-consistency samples per analyst (1 disables the ensemble)
   min_support: 2              # a finding must appear in this many samples to survive the vote
   verifier: true              # run the adjudication pass before the reviewer
+  adaptive: true              # spend extra samples only on chunks that found something
+  cross_file: false           # opt-in extra pass for cross-file issues (1 more call)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -126,8 +131,15 @@ review:
   include_deletions: false
   language_hint: ""           # e.g. "python" — appended to agent prompts
   context_lines: 8            # head-ref context lines added around each hunk (0 disables)
+  incremental: true           # on re-review, skip files unchanged since the last review
+  suppress: []                # silence findings: ["legacy/**", "api/*.py:nit"]
 output:
   inline: true                # post anchored findings as inline review comments
+  suggestions: true           # render one-line fixes as one-click GitHub suggestion blocks
+  request_changes_at: ""      # submit REQUEST_CHANGES at/above this severity (e.g. "critical")
+  labels: false               # apply risk labels (security / needs-tests / …) to the PR
+gate:
+  level: "off"                # fail a Check Run at/above this severity so merges can be required
 describe: false               # maintain a generated summary in the PR body
 dry_run: false                # estimate cost, post the estimate, no LLM calls
 ```
@@ -138,6 +150,13 @@ dry_run: false                # estimate cost, post the estimate, no LLM calls
 provider:
   base_url: https://api.deepseek.com/v1
   model: deepseek-v4-flash
+```
+
+You can also silence a false positive inline, right where it lives:
+
+```python
+danger = eval(user_input)  # pr-sentinel: ignore
+risky  = run(x)            # pr-sentinel: ignore[security]
 ```
 
 Lockfiles, `node_modules`, `vendor`, `dist`, minified and generated files are **always skipped** (built-in list, protects your token budget). A malformed config never breaks anything — defaults apply and the comment notes it.
@@ -160,7 +179,21 @@ This category of tool was actively attacked in 2026 — review bots leaked their
 
 PR Sentinel **never breaks your CI**. Every failure path — provider down, rate limits, malformed diffs, huge PRs, missing config — degrades to a short comment (or a log line) and a clean exit. Hard caps (`max_files`, `max_input_tokens`) guarantee a worst-case cost ceiling per PR no matter what arrives.
 
-On every push to the PR, the existing review comment is **updated in place** (one living comment per PR), not stacked.
+On every push to the PR, the existing review comment is **updated in place** (one living comment per PR), not stacked — and only the files **changed since the last review** are re-examined (incremental review), so settled code isn't re-flagged or re-billed.
+
+## Features teams actually adopt for
+
+Everything below is $0 — you bring the key, so there's no paid tier gating any of it:
+
+- **One-click fixes.** When a finding has a precise fix, it's offered as a GitHub *suggestion block* — the author clicks "Commit suggestion" to apply it.
+- **Merge gating.** Set `gate.level: high` and PR Sentinel posts a **Check Run** that fails when there's an unresolved High/Critical finding — make it a required check and risky code can't merge. Off by default; never surprises you.
+- **Request changes.** Optionally submit the review as *Changes requested* at a severity you choose.
+- **Suppression.** Silence a false positive with an inline `# pr-sentinel: ignore` or a `review.suppress` glob — it stays gone.
+- **Custom guidance.** Tell the agents about your codebase (`agents.guidance`, `agents.instructions`) — read from the base branch, so a hostile PR can't inject instructions.
+- **Risk labels + readiness score.** Auto-label PRs (`security`, `needs-tests`, …) and show a deterministic *merge-readiness 0–100* and *review-effort 1–5* in the summary.
+- **Presets.** `mode: fast | balanced | thorough` instead of tuning knobs.
+
+> Two optional features need one extra permission each in your workflow: merge gating adds `checks: write`, and risk labels add `issues: write`. Everything else works with the default `contents: read` + `pull-requests: write`.
 
 ## Accuracy is a systems problem, not a model-size problem
 
@@ -191,7 +224,7 @@ PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
 PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**163 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**200 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
 
 ## On-demand commands
 

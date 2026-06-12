@@ -36,6 +36,14 @@ Hard caps (`max_files`, `max_input_tokens`, `max_output_tokens_per_agent`) plus 
 
 The `@pr-sentinel review | ask | describe` commands run on `issue_comment` events, which any GitHub user can create. Each command therefore checks the commenter's `author_association`: only `OWNER`, `MEMBER`, and `COLLABORATOR` can trigger one. A drive-by commenter cannot spend the repo owner's API key, and command text is never interpolated into any privileged context — the `ask` question goes through the same delimited-data-block sanitizer as the diff. The same evidence-anchoring and output-scrubbing defenses apply to command output.
 
+## Suppression and custom instructions are base-branch only (v2.1)
+
+`review.suppress` (silence findings), `agents.guidance`, and `agents.instructions` (extra prompt guidance) all live in `.pr-sentinel.yml`, which is read from the **base branch** — so a hostile PR cannot suppress its own findings or inject instructions into the analysts by editing config on its head. The one inline escape hatch, a `pr-sentinel: ignore` comment in the diff, can only silence a finding on the exact line it sits on (or 1–2 lines below), so it can't be used to blanket-disable review.
+
+## Optional features and their permissions (v2.1)
+
+The default install needs only `contents: read` + `pull-requests: write`. Two opt-in features ask for one more scope each, and only when enabled: **merge gating** (`gate.level`) posts a Check Run and needs `checks: write`; **risk labels** (`output.labels`) needs `issues: write`. Both fail open — a missing permission logs a warning and the review still posts.
+
 ## Supply chain
 
 - Dependencies are version-bounded in `pyproject.toml`; the Docker image uses `python:3.12-slim`.
