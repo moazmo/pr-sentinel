@@ -116,6 +116,7 @@ class TestProviderJsonMode:
         provider = OpenAICompatProvider("k", base_url="https://x/v1")
         provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         result = await provider.complete("s", "u", max_tokens=10, json_mode=True)
+        await provider.aclose()
         assert calls == [True, False]  # tried json, fell back
         assert provider._json_mode_supported is False
         assert result.text == '{"findings": []}'
@@ -131,6 +132,7 @@ class TestProviderJsonMode:
         provider = OpenAICompatProvider("k")
         provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         result = await provider.complete("s", "u", max_tokens=10)
+        await provider.aclose()
         assert result.cached_tokens == 70
 
 
@@ -149,6 +151,7 @@ class TestAnthropicProvider:
         provider = AnthropicProvider("ak", model="claude-haiku-4-5-20251001")
         provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         result = await provider.complete("sys", "usr", max_tokens=10)
+        await provider.aclose()
         assert captured["path"] == "/v1/messages"
         assert captured["headers"]["x-api-key"] == "ak"
         assert captured["headers"]["anthropic-version"]

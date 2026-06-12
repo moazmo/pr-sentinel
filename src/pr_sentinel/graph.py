@@ -271,8 +271,21 @@ def build_graph(
                 }
                 for f in inline_findings
             ]
+            # V2 P7: submit as REQUEST_CHANGES when a finding meets the
+            # configured severity, so the PR shows a real "changes requested".
+            event = "COMMENT"
+            threshold = config.output.request_changes_at.strip().lower()
+            if threshold:
+                from .models import Severity
+
+                try:
+                    floor = Severity(threshold)
+                    if any(f.severity.rank <= floor.rank for f in findings):
+                        event = "REQUEST_CHANGES"
+                except ValueError:
+                    pass
             inline_posted = await github.create_inline_review(
-                state["pr"].number, state["pr"].head_sha, comments
+                state["pr"].number, state["pr"].head_sha, comments, event=event
             )
         if not inline_posted:
             # Fail-open: inline rejected -> everything back into the summary.

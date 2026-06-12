@@ -223,19 +223,21 @@ class GitHubClient:
         )
 
     async def create_inline_review(
-        self, pr_number: int, commit_sha: str, comments: list[dict]
+        self, pr_number: int, commit_sha: str, comments: list[dict],
+        event: str = "COMMENT",
     ) -> bool:
         """Post one PR review whose comments anchor to diff lines (V2 B1).
 
         Each comment: {"path": ..., "line": <new-file line>, "body": ...}.
-        Returns False on any failure — the caller falls back to keeping those
-        findings in the summary comment (fail-open, like everything else).
+        `event` is COMMENT (default) or REQUEST_CHANGES (V2 P7). Returns False
+        on any failure — the caller falls back to keeping those findings in the
+        summary comment (fail-open, like everything else).
         """
-        if not comments:
+        if not comments and event == "COMMENT":
             return True
         payload = {
             "commit_id": commit_sha,
-            "event": "COMMENT",
+            "event": event,
             "body": "",
             "comments": [
                 {"path": c["path"], "line": int(c["line"]), "side": "RIGHT",

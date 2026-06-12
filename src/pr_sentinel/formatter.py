@@ -95,6 +95,30 @@ def _footer(usage: UsageStats, model: str, agents_run: int) -> str:
     )
 
 
+_SEVERITY_PENALTY = {
+    Severity.CRITICAL: 40, Severity.HIGH: 20, Severity.MEDIUM: 8,
+    Severity.LOW: 3, Severity.NIT: 1,
+}
+
+
+def readiness_score(findings: list[Finding]) -> int:
+    """A deterministic 0–100 merge-readiness score (V2 P10) — no LLM call.
+    Starts at 100; each finding subtracts by severity."""
+    score = 100 - sum(_SEVERITY_PENALTY[f.severity] for f in findings)
+    return max(0, min(100, score))
+
+
+def review_effort(findings: list[Finding], files: list[ChangedFile]) -> int:
+    """A 1–5 review-effort estimate from change size + findings (V2 P10)."""
+    reviewable = sum(1 for f in files if not f.skipped)
+    churn = sum(f.additions + f.deletions for f in files if not f.skipped)
+    points = reviewable + churn // 80 + len(findings)
+    for threshold, effort in ((2, 1), (6, 2), (15, 3), (40, 4)):
+        if points <= threshold:
+            return effort
+    return 5
+
+
 def format_inline_body(finding: Finding, *, suggestions: bool = True) -> str:
     """The body of one inline review comment (V2 B1).
 
@@ -168,9 +192,15 @@ def format_review(
             for s, n in sorted(all_by_severity.items(), key=lambda kv: kv[0].rank)
         )
         inline_note = f" · {len(inline_findings)} posted inline" if inline_findings else ""
+        all_findings = findings + inline_findings
+        score = readiness_score(all_findings)
+        effort = review_effort(all_findings, files)
         parts.append(
             f"**{total_count} finding{'s' if total_count != 1 else ''} ({counts}) "
             f"· {completed}/{agents_run} agents completed{inline_note}**"
+        )
+        parts.append(
+            f"<sub>Merge readiness: **{score}/100** · review effort: {effort}/5</sub>"
         )
         if verdict:
             parts.append(f"> {verdict}")

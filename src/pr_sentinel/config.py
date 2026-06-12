@@ -66,6 +66,11 @@ class AccuracyConfig(BaseModel):
 
 class AgentsConfig(BaseModel):
     enabled: list[AgentName] = Field(default_factory=lambda: list(ANALYST_AGENTS))
+    # Repo-specific guidance appended to every analyst prompt (V2 P5), e.g.
+    # "This is a Django project; ignore TODO comments."
+    guidance: str = Field(default="", max_length=2000)
+    # Per-agent guidance keyed by agent name (architect|security|...).
+    instructions: dict[str, str] = Field(default_factory=dict)
 
 
 class LimitsConfig(BaseModel):

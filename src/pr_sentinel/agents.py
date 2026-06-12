@@ -123,11 +123,23 @@ def load_prompt(name: str) -> str:
     return (base / f"{name}.md").read_text(encoding="utf-8")
 
 
-def analyst_system_prompt(agent: AgentName, language_hint: str = "") -> str:
+def analyst_system_prompt(
+    agent: AgentName,
+    language_hint: str = "",
+    guidance: str = "",
+    agent_instructions: str = "",
+) -> str:
     prompt = load_prompt(agent.value) + "\n\n" + load_prompt("_shared_rules")
+    # All of the below come from the BASE-branch config, never the PR — so a
+    # hostile PR can't inject instructions this way (V2 P5).
     if language_hint:
-        # The hint comes from the BASE-branch config, not the PR — safe to append.
         prompt += f"\n\nThe repository's primary language is {language_hint}."
+    extras = [g.strip() for g in (guidance, agent_instructions) if g.strip()]
+    if extras:
+        prompt += (
+            "\n\n## Repository-specific guidance (from the maintainers)\n"
+            + "\n".join(f"- {e}" for e in extras)
+        )
     return prompt
 
 
@@ -173,7 +185,12 @@ async def run_analyst(
     agent is reported as an error (D3)."""
     from .merge import vote_findings  # local import avoids a module cycle
 
-    system = analyst_system_prompt(agent, config.review.language_hint)
+    system = analyst_system_prompt(
+        agent,
+        config.review.language_hint,
+        config.agents.guidance,
+        config.agents.instructions.get(agent.value, ""),
+    )
     usage = UsageStats()
     samples_per_chunk = config.accuracy.samples
     temperature = ANALYST_TEMPERATURE if samples_per_chunk == 1 else ENSEMBLE_TEMPERATURE
