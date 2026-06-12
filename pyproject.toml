@@ -10,7 +10,7 @@ keywords = ["code-review", "github-actions", "llm", "multi-agent", "langgraph", 
 dependencies = [
     "langgraph>=0.2.60,<0.4",
     "httpx>=0.28.1,<1",
-    "pydantic>=2.7,<3",
+    "pydantic>=2.13.4,<3",
     "PyYAML>=6.0.3,<7",
 ]
 
