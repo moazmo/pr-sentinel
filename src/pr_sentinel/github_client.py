@@ -161,6 +161,21 @@ class GitHubClient:
             json={"body": body},
         )
 
+    async def add_labels(self, pr_number: int, labels: list[str]) -> bool:
+        """Add labels to a PR (V2 P8). Additive — never removes the author's
+        labels. Fail-open."""
+        if not labels:
+            return True
+        try:
+            await self._request(
+                "POST", f"/repos/{self._repo}/issues/{pr_number}/labels",
+                json={"labels": labels},
+            )
+            return True
+        except GitHubError as exc:
+            logger.warning("Adding labels failed: %s", exc)
+            return False
+
     async def get_pr(self, pr_number: int) -> dict:
         """Fetch PR metadata — used by comment-triggered commands, where the
         issue_comment event payload carries no PR details."""

@@ -26,7 +26,7 @@ import logging
 
 from langgraph.graph import END, START, StateGraph
 
-from .agents import run_analyst, run_describe, run_reviewer, run_verifier
+from .agents import run_analyst, run_cross_file, run_describe, run_reviewer, run_verifier
 from .chunking import apply_skip_rules, build_chunks, build_pr_map
 from .config import ANALYST_AGENTS, SentinelConfig
 from .diffmap import added_line_numbers, extend_patch
@@ -40,6 +40,24 @@ from .suppression import apply_suppressions
 from .verification import anchor_findings
 
 logger = logging.getLogger(__name__)
+
+
+def _risk_labels(findings) -> list[str]:
+    """PR labels derived from findings (V2 P8). Additive, capped, deterministic."""
+    if not findings:
+        return ["pr-sentinel:clean"]
+    labels: set[str] = set()
+    for f in findings:
+        agent = f.agent.value
+        if agent == AgentName.SECURITY.value:
+            labels.add("security")
+        elif agent == AgentName.PERFORMANCE.value:
+            labels.add("performance")
+        elif agent == AgentName.TEST.value:
+            labels.add("needs-tests")
+    if any(f.severity.value in ("critical", "high") for f in findings):
+        labels.add("pr-sentinel:needs-attention")
+    return sorted(labels)
 
 
 async def _publish_check_run(github, state, config, findings, secrets) -> None:
@@ -192,6 +210,26 @@ def build_graph(
             update["errors"] = [error]
         return update
 
+    async def cross_file_node(state: ReviewState) -> dict:
+        config: SentinelConfig = state["config"]
+        if config.dry_run or not config.accuracy.cross_file:
+            return {}
+        new_findings, usage = await run_cross_file(
+            provider, state["pr_map"], state.get("chunks", []),
+            state.get("merged_findings", []), config,
+        )
+        if not new_findings:
+            return {"usage": usage}
+        # Anchor + suppress the new findings like any other, then re-merge.
+        from .merge import merge_findings
+        from .suppression import apply_suppressions
+
+        anchored, _ = anchor_findings(new_findings, state.get("files", []))
+        anchored, _ = apply_suppressions(anchored, state.get("files", []), config.review.suppress)
+        combined = state.get("merged_findings", []) + anchored
+        merged, clusters = merge_findings(combined, config.min_severity)
+        return {"merged_findings": merged, "_clusters": clusters, "usage": usage}
+
     async def reviewer_node(state: ReviewState) -> dict:
         config: SentinelConfig = state["config"]
         clusters = state.get("_clusters") or []
@@ -315,6 +353,10 @@ def build_graph(
         if github is not None and config.gate.level != "off":
             await _publish_check_run(github, state, config, findings, secrets)
 
+        # V2 P8: risk labels derived from findings.
+        if github is not None and config.output.labels:
+            await github.add_labels(state["pr"].number, _risk_labels(findings))
+
         return {"final_review": comment}
 
     graph = StateGraph(ReviewState)
@@ -325,11 +367,13 @@ def build_graph(
         graph.add_edge(agent.value, "merge_findings")
     graph.add_node("merge_findings", merge_node)
     graph.add_node("verifier", verifier_node)
+    graph.add_node("cross_file", cross_file_node)
     graph.add_node("reviewer", reviewer_node)
     graph.add_node("publish", publish)
     graph.add_edge(START, "ingest")
     graph.add_edge("merge_findings", "verifier")
-    graph.add_edge("verifier", "reviewer")
+    graph.add_edge("verifier", "cross_file")
+    graph.add_edge("cross_file", "reviewer")
     graph.add_edge("reviewer", "publish")
     graph.add_edge("publish", END)
     return graph.compile()

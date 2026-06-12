@@ -42,8 +42,18 @@ def _location(finding: Finding) -> str:
     return f"`{finding.file}:{finding.line_start}`"
 
 
+def _confidence(finding: Finding) -> str:
+    """A small user-facing trust signal from the ensemble vote (V2 P14)."""
+    if finding.support >= 2:
+        return f" <sub>· {finding.support} agents agreed</sub>"
+    return ""
+
+
 def _finding_line(finding: Finding) -> str:
-    line = f"- **{_location(finding)}** — [{_attribution(finding)}] {finding.message}"
+    line = (
+        f"- **{_location(finding)}** — [{_attribution(finding)}] "
+        f"{finding.message}{_confidence(finding)}"
+    )
     if finding.suggestion:
         line += (
             f"\n  <details><summary>Suggested fix</summary>\n\n"
@@ -131,6 +141,7 @@ def format_inline_body(finding: Finding, *, suggestions: bool = True) -> str:
     # A suggestion block replaces the single anchored line, so only offer it for
     # single-line findings whose fix is itself one line — otherwise the apply
     # would mangle the file. Anything else falls back to prose.
+    body += _confidence(finding)
     single_line = finding.line_start == finding.line_end
     fix_one_line = finding.fix and "\n" not in finding.fix.strip()
     if suggestions and single_line and fix_one_line:

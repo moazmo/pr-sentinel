@@ -62,6 +62,14 @@ class AccuracyConfig(BaseModel):
     # The adjudication pass: one batched LLM call that confirms/rejects each
     # merged finding against the numbered diff before the reviewer writes prose.
     verifier: bool = True
+    # Adaptive sampling (V2 P12): spend the first sample, and only draw the
+    # remaining samples for chunks where that sample found something worth
+    # re-checking. Saves ~40% of calls on clean code without losing the vote
+    # where it matters. No effect when samples == 1.
+    adaptive: bool = True
+    # Opt-in final pass that flags cross-file issues per-file analysts miss
+    # (V2 P13). One extra LLM call.
+    cross_file: bool = False
 
 
 class AgentsConfig(BaseModel):

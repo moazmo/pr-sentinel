@@ -195,10 +195,11 @@ async def run_analyst(
     samples_per_chunk = config.accuracy.samples
     temperature = ANALYST_TEMPERATURE if samples_per_chunk == 1 else ENSEMBLE_TEMPERATURE
     failures = 0
-    total_calls = 0
+    calls_made = 0
 
     async def one_sample(chunk) -> list[Finding]:
-        nonlocal failures
+        nonlocal failures, calls_made
+        calls_made += 1
         user = f"{pr_map}\n\n<diff>\n{chunk.text}\n</diff>"
         for attempt in range(1 + PARSE_RETRIES):
             try:
@@ -234,19 +235,32 @@ async def run_analyst(
         return []
 
     async def review_chunk(chunk) -> list[Finding]:
+        if samples_per_chunk == 1:
+            return await one_sample(chunk)
+        # Adaptive (V2 P12): draw one sample first; only spend the rest on
+        # chunks where that sample found something — clean code is the common
+        # case and doesn't need a vote. Non-adaptive draws all K up front.
+        if config.accuracy.adaptive:
+            first = await one_sample(chunk)
+            worth_more = any(
+                f.severity.rank <= Severity.MEDIUM.rank for f in first
+            ) or len(first) >= 1
+            if not worth_more:
+                return first
+            rest = await asyncio.gather(
+                *(one_sample(chunk) for _ in range(samples_per_chunk - 1))
+            )
+            return vote_findings([first, *rest], min_support=config.accuracy.min_support)
         sample_results = await asyncio.gather(
             *(one_sample(chunk) for _ in range(samples_per_chunk))
         )
-        return vote_findings(
-            list(sample_results), min_support=config.accuracy.min_support
-        )
+        return vote_findings(list(sample_results), min_support=config.accuracy.min_support)
 
-    total_calls = len(chunks) * samples_per_chunk
     results = await asyncio.gather(*(review_chunk(c) for c in chunks))
     findings: list[Finding] = [f for chunk_findings in results for f in chunk_findings]
 
     error: AgentError | None = None
-    if total_calls and failures == total_calls:
+    if calls_made and failures == calls_made:
         error = AgentError(agent=agent.value, message="all calls failed (provider error/timeout)")
     return findings, usage, error
 
@@ -506,6 +520,45 @@ def _parse_verifier_output(raw: str) -> dict[int, tuple[str, Severity | None]] |
 # --------------------------------------------------------------------------
 # Describe (V2 B4) and Ask (V2 B2) — single-call tools.
 # --------------------------------------------------------------------------
+
+async def run_cross_file(
+    provider: LLMProvider, pr_map: str, chunks: list, existing: list[Finding],
+    config: SentinelConfig,
+) -> tuple[list[Finding], UsageStats]:
+    """Opt-in pass (V2 P13) that flags cross-file issues the per-file analysts
+    miss. Returns NEW findings (unanchored — the caller anchors them). Needs
+    at least two reviewed files to be worth running."""
+    usage = UsageStats()
+    files_seen = {f.path for c in chunks for f in c.files}
+    if len(files_seen) < 2:
+        return [], usage
+    diff_text = "\n\n".join(c.text for c in chunks)[:80_000]
+    prior = "; ".join(f"{f.file}:{f.line_start} {f.category}" for f in existing[:30])
+    system = load_prompt("cross_file") + "\n\n" + load_prompt("_shared_rules")
+    user = (
+        f"{pr_map}\n\nAlready-reported (do not repeat): {prior or 'none'}\n\n"
+        f"<diff>\n{diff_text}\n</diff>"
+    )
+    try:
+        result = await asyncio.wait_for(
+            provider.complete(
+                system, user,
+                max_tokens=config.limits.max_output_tokens_per_agent,
+                temperature=ANALYST_TEMPERATURE,
+                model=config.provider.resolved_review_model,
+                json_mode=True,
+            ),
+            timeout=config.limits.agent_timeout_seconds,
+        )
+    except (ProviderError, asyncio.TimeoutError) as exc:
+        logger.warning("Cross-file pass failed: %s", exc)
+        return [], usage
+    usage.add("cross_file", result.prompt_tokens, result.completion_tokens,
+              cached=result.cached_tokens)
+    # Reuse the security-agent label so attribution reads sensibly; the category
+    # carries the cross-file nature.
+    return parse_findings(result.text, AgentName.ARCHITECT), usage
+
 
 async def run_describe(
     provider: LLMProvider, pr_map: str, chunks: list, config: SentinelConfig
