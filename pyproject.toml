@@ -31,7 +31,7 @@ Changelog = "https://github.com/moazmo/pr-sentinel/blob/main/CHANGELOG.md"
 pr-sentinel = "pr_sentinel.main:cli"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=82.0.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
