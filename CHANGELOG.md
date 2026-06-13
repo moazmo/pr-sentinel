@@ -2,7 +2,7 @@
 
 All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags.
 
-## [Unreleased] — v2.5 research levers
+## [2.5.0] — 2026-06-13 — research levers
 
 ### Added — research levers (all $0; config toggles, **all off by default** — measured ≈ baseline on flash, on together in `mode: thorough`)
 - **Confirmation-bias debiasing** (`accuracy.debias`): analysts judge the code on its own merits and ignore the PR title's framing. Accuracy-neutral on flash here, but real injection hardening.
