@@ -1,0 +1,22 @@
+# New bug class (JS): open redirect — user-controlled redirect target with no
+# validation, usable for phishing.
+title: "Add post-login redirect"
+files:
+  - path: routes/auth.js
+    status: modified
+    patch: |
+      @@ -10,6 +10,10 @@ router.post('/login', (req, res) => {
+         if (!authenticate(req.body)) {
+           return res.status(401).send('no');
+         }
+      +  // send the user back where they came from
+      +  const next = req.query.next;
+      +  return res.redirect(next);
+      +});
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: routes/auth.js
+      category_contains: ["redirect", "open redirect", "url"]
+      min_severity: medium

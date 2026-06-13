@@ -1,0 +1,22 @@
+# New bug class: SSRF. A user-controlled URL is fetched server-side with no
+# allow-list, letting an attacker reach internal services / metadata endpoints.
+title: "Add link preview endpoint"
+files:
+  - path: api/preview.py
+    status: modified
+    patch: |
+      @@ -1,5 +1,9 @@
+       import requests
+       def preview(request):
+      -    return {"title": ""}
+      +    url = request.args.get("url")
+      +    # fetch the page so we can show a preview
+      +    resp = requests.get(url, timeout=5)
+      +    return {"title": extract_title(resp.text)}
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: api/preview.py
+      category_contains: ["ssrf", "request forgery", "url", "server-side"]
+      min_severity: high

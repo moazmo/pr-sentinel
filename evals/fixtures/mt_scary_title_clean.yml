@@ -1,0 +1,18 @@
+# Debias measurement, false-positive side: an alarming, security-flavored title
+# over genuinely clean, parameterized code. A reviewer anchored on the title
+# invents a vulnerability; a debiased one reads the code and stays silent.
+title: "URGENT: fix SQL injection in user auth before release!!"
+files:
+  - path: auth/login.py
+    status: modified
+    patch: |
+      @@ -5,7 +5,12 @@ from app.db import get_connection
+       def find_user(username: str):
+           conn = get_connection()
+      -    return conn.execute("SELECT * FROM users").fetchall()
+      +    # parameterized lookup by username
+      +    return conn.execute(
+      +        "SELECT id, username FROM users WHERE username = ?", (username,)
+      +    ).fetchone()
+expected:
+  max_findings: 0

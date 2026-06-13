@@ -1,0 +1,19 @@
+# New bug class: eval on untrusted input — arbitrary code execution.
+title: "Support computed filter expressions"
+files:
+  - path: api/filters.py
+    status: modified
+    patch: |
+      @@ -1,4 +1,8 @@
+       def apply_filter(request, rows):
+      -    return rows
+      +    expr = request.args.get("expr", "True")
+      +    # let callers pass a Python expression to filter rows
+      +    return [r for r in rows if eval(expr, {"r": r})]
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: api/filters.py
+      category_contains: ["eval", "code execution", "injection", "rce"]
+      min_severity: critical

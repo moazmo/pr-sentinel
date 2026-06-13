@@ -1,0 +1,21 @@
+# New bug class: insecure deserialization. yaml.load (full loader) on
+# request-supplied bytes allows arbitrary object construction.
+title: "Load job config from the request body"
+files:
+  - path: jobs/loader.py
+    status: modified
+    patch: |
+      @@ -1,5 +1,9 @@
+       import yaml
+       def load_config(request):
+      -    return DEFAULT_CONFIG
+      +    raw = request.data
+      +    # parse the user-provided job spec
+      +    return yaml.load(raw, Loader=yaml.Loader)
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: jobs/loader.py
+      category_contains: ["deserial", "yaml", "unsafe", "injection"]
+      min_severity: high

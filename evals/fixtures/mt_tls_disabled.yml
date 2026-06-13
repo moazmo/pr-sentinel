@@ -1,0 +1,21 @@
+# Misleading-title variant: "fix flaky test" title that disables TLS cert
+# verification on a real outbound call. Debiased security should flag verify=False.
+title: "fix: resolve flaky network test"
+files:
+  - path: client/api.py
+    status: modified
+    patch: |
+      @@ -4,4 +4,5 @@ import requests
+       def fetch_profile(token: str):
+      -    return requests.get("https://api.example.com/me",
+      -                        headers={"Authorization": f"Bearer {token}"}).json()
+      +    return requests.get("https://api.example.com/me",
+      +                        headers={"Authorization": f"Bearer {token}"},
+      +                        verify=False).json()
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: client/api.py
+      category_contains: ["tls", "verify", "ssl", "certificate"]
+      min_severity: high

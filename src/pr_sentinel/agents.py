@@ -123,13 +123,54 @@ def load_prompt(name: str) -> str:
     return (base / f"{name}.md").read_text(encoding="utf-8")
 
 
+def _load_optional(name: str) -> str:
+    """Load a prompt fragment, returning '' if the file is absent (so a missing
+    calibration/lens fragment degrades to the base prompt, never a crash)."""
+    try:
+        return load_prompt(name)
+    except (FileNotFoundError, OSError):
+        return ""
+
+
+# Ensemble lenses (V2.5 L4): index 0 is the plain pass (no extra text); the rest
+# cycle through diverse reviewing viewpoints. Kept as short user-message suffixes
+# so the large, identical diff stays in the provider's cached prefix.
+_LENS_FRAGMENTS = ("", "_lens_checklist", "_lens_adversarial")
+
+
+def _lens_directive(sample_index: int) -> str:
+    name = _LENS_FRAGMENTS[sample_index % len(_LENS_FRAGMENTS)]
+    return _load_optional(name) if name else ""
+
+
 def analyst_system_prompt(
     agent: AgentName,
     language_hint: str = "",
     guidance: str = "",
     agent_instructions: str = "",
+    *,
+    debias: bool = False,
+    calibration: bool = False,
+    cot: str = "off",
 ) -> str:
+    """Assemble an analyst system prompt.
+
+    Order matters for prompt caching (V2.5 L5): the STABLE blocks — per-agent
+    role, shared rules, calibration, debiasing, CoT instruction — come first and
+    are byte-identical across every call for an agent, so they sit in the
+    provider's cached prefix. The VARIABLE blocks (language hint, repo guidance)
+    come last; they change per repo, never per call within a run.
+    """
     prompt = load_prompt(agent.value) + "\n\n" + load_prompt("_shared_rules")
+    # Stable, cache-friendly prefix additions.
+    if calibration:
+        block = _load_optional(f"{agent.value}_calibration")
+        if block:
+            prompt += "\n\n" + block
+    if debias:
+        prompt += "\n\n" + load_prompt("_debias")
+    if cot == "brief":
+        prompt += "\n\n" + load_prompt("_cot")
     # All of the below come from the BASE-branch config, never the PR — so a
     # hostile PR can't inject instructions this way (V2 P5).
     if language_hint:
@@ -190,17 +231,25 @@ async def run_analyst(
         config.review.language_hint,
         config.agents.guidance,
         config.agents.instructions.get(agent.value, ""),
+        debias=config.accuracy.debias,
+        calibration=config.accuracy.calibration,
+        cot=config.accuracy.cot,
     )
     usage = UsageStats()
     samples_per_chunk = config.accuracy.samples
     temperature = ANALYST_TEMPERATURE if samples_per_chunk == 1 else ENSEMBLE_TEMPERATURE
+    use_lenses = config.accuracy.lenses and samples_per_chunk > 1
     failures = 0
     calls_made = 0
 
-    async def one_sample(chunk) -> list[Finding]:
+    async def one_sample(chunk, sample_index: int = 0) -> list[Finding]:
         nonlocal failures, calls_made
         calls_made += 1
         user = f"{pr_map}\n\n<diff>\n{chunk.text}\n</diff>"
+        if use_lenses:
+            lens = _lens_directive(sample_index)
+            if lens:
+                user += f"\n\n{lens}"
         for attempt in range(1 + PARSE_RETRIES):
             try:
                 result = await asyncio.wait_for(
@@ -241,18 +290,18 @@ async def run_analyst(
         # chunks where that sample found something — clean code is the common
         # case and doesn't need a vote. Non-adaptive draws all K up front.
         if config.accuracy.adaptive:
-            first = await one_sample(chunk)
+            first = await one_sample(chunk, 0)
             worth_more = any(
                 f.severity.rank <= Severity.MEDIUM.rank for f in first
             ) or len(first) >= 1
             if not worth_more:
                 return first
             rest = await asyncio.gather(
-                *(one_sample(chunk) for _ in range(samples_per_chunk - 1))
+                *(one_sample(chunk, i) for i in range(1, samples_per_chunk))
             )
             return vote_findings([first, *rest], min_support=config.accuracy.min_support)
         sample_results = await asyncio.gather(
-            *(one_sample(chunk) for _ in range(samples_per_chunk))
+            *(one_sample(chunk, i) for i in range(samples_per_chunk))
         )
         return vote_findings(list(sample_results), min_support=config.accuracy.min_support)
 

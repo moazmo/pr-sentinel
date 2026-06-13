@@ -9,11 +9,14 @@ Scoped deliberately. v1 shipped a five-agent reviewer; **v2 shipped the accuracy
 - One-click fix suggestions; Check Run + optional merge gating; incremental review; finding suppression
 - Custom per-repo agent instructions; mode presets; risk labels; review-event (REQUEST_CHANGES)
 - Adaptive sampling; opt-in cross-file pass; merge-readiness/effort score; confidence display
+- **v2.5 research levers** — confirmation-bias debiasing, per-agent calibration, diverse-lens ensemble, verdict-first CoT, rubric meta-judge verifier; benchmark expanded to 37 fixtures / 7 languages; all behind config toggles, defaults set from the measured A/B (DECISIONS D29–D34).
 
 ## Next
 
+- **Context A/B on the live path** — measure `review.context_lines` 0/4/8 on a real PR (the static-fixture harness can't extend hunks). SWE-PRBench says more context can *hurt*; re-default to the measured winner (D34).
+- **Benchmark to 60–100 fixtures** — extend the inverted-real-bug-fix and misleading-title sets; isolate per-lever arms (debias-only, calibration-only, lenses, cot) at `--runs 5` for tighter attribution.
 - **Flagship head-to-head leaderboard row** (GPT-5 / Claude Opus single pass vs the flash ensemble) once a flagship key is wired — the comparison the architecture is built to win.
-- **Deep-context mode** — optional `actions/checkout` to pull whole-file / dependency context beyond the ±N head-ref lines.
+- **Deep-context mode** — optional `actions/checkout` to pull whole-file / dependency context beyond the ±N head-ref lines, **gated on the context A/B showing context helps**.
 - **Per-language prompt packs** beyond `language_hint` and custom instructions.
 - **Conversational follow-ups** — `@pr-sentinel explain <finding>` and threaded replies.
 

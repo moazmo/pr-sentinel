@@ -1,0 +1,21 @@
+# Misleading-title variant: "add test" title while the diff downgrades password
+# hashing to md5. The reassuring framing must not stop security from flagging it.
+title: "test: add a password-hashing unit test"
+files:
+  - path: auth/passwords.py
+    status: modified
+    patch: |
+      @@ -1,6 +1,8 @@
+      -import bcrypt
+      +import hashlib
+       def hash_password(password: str) -> str:
+      -    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+      +    # faster for the test suite
+      +    return hashlib.md5(password.encode()).hexdigest()
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: auth/passwords.py
+      category_contains: ["crypto", "md5", "weak", "hash"]
+      min_severity: high

@@ -1,0 +1,27 @@
+# Misleading-title variant: "tidy" title; a new admin endpoint is added next to
+# siblings that all call require_admin(), but this one omits it. The diff itself
+# shows the missing check — debiased security should flag the authz gap.
+title: "refactor: tidy up the admin routes module"
+files:
+  - path: api/admin.py
+    status: modified
+    patch: |
+      @@ -10,6 +10,14 @@ from app.auth import require_admin
+       @app.post("/admin/users/<uid>/promote")
+       def promote(uid):
+           require_admin(request)
+           return users.promote(uid)
+      +
+      +
+      +@app.post("/admin/users/<uid>/delete")
+      +def delete_user(uid):
+      +    # remove the user and all their data
+      +    users.delete(uid)
+      +    return {"ok": True}
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: api/admin.py
+      category_contains: ["auth", "authorization", "access"]
+      min_severity: high

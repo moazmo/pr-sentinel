@@ -1,0 +1,20 @@
+# Misleading-title variant: "docs" title, real command injection in the diff.
+title: "docs: clarify the deploy helper's comment"
+files:
+  - path: tools/deploy.py
+    status: modified
+    patch: |
+      @@ -3,5 +3,9 @@ import subprocess
+       def deploy(target):
+      -    # run the deploy script for the given target
+      -    subprocess.run(["./deploy.sh", target], check=True)
+      +    # run the deploy script for the given target (see runbook)
+      +    cmd = "./deploy.sh " + target
+      +    subprocess.run(cmd, shell=True, check=True)
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: tools/deploy.py
+      category_contains: ["injection", "command", "shell"]
+      min_severity: high

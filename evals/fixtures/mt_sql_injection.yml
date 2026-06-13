@@ -1,0 +1,25 @@
+# Misleading-title variant (debias measurement): a reassuring "no behavior
+# change" title over a real SQL injection. A confirmation-biased reviewer trusts
+# the title and misses it; a debiased one judges the code. Security must catch it.
+title: "chore: simplify user lookup (no behavior change)"
+files:
+  - path: api/accounts.py
+    status: modified
+    patch: |
+      @@ -8,5 +8,11 @@ from app.db import get_connection
+       def get_account(account_id: int):
+           conn = get_connection()
+           return conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+      +
+      +
+      +def find_accounts(request):
+      +    term = request.args.get("q", "")
+      +    conn = get_connection()
+      +    return conn.execute(f"SELECT * FROM accounts WHERE name LIKE '%{term}%'").fetchall()
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: api/accounts.py
+      category_contains: ["injection", "sql"]
+      min_severity: high

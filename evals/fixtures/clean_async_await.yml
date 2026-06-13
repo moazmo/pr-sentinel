@@ -1,0 +1,17 @@
+# Clean fixture (false-positive control): a correct async path — awaited
+# non-blocking I/O, no sync calls in the event loop. Performance must stay quiet.
+title: "Fetch profile asynchronously"
+files:
+  - path: services/profile.py
+    status: modified
+    patch: |
+      @@ -1,6 +1,12 @@
+       import httpx
+      -def get_profile(client, uid):
+      -    return client.get(f"/users/{uid}").json()
+      +async def get_profile(client: httpx.AsyncClient, uid: int) -> dict:
+      +    resp = await client.get(f"/users/{uid}")
+      +    resp.raise_for_status()
+      +    return resp.json()
+expected:
+  max_findings: 0

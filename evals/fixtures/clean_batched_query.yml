@@ -1,0 +1,22 @@
+# Clean fixture (false-positive control): the GOOD pattern — a single batched
+# query replaces per-item fetches. This is the FIX for N+1, not a bug; the
+# performance agent must not flag the loop that only builds the id list.
+title: "Batch the membership lookup"
+files:
+  - path: services/members.py
+    status: modified
+    patch: |
+      @@ -2,8 +2,9 @@ from app.db import get_connection
+       def load_members(team_ids):
+      -    out = []
+      -    for tid in team_ids:
+      -        out.append(get_connection().execute(
+      -            "SELECT * FROM members WHERE team_id = ?", (tid,)).fetchall())
+      -    return out
+      +    conn = get_connection()
+      +    placeholders = ",".join("?" for _ in team_ids)
+      +    rows = conn.execute(
+      +        f"SELECT * FROM members WHERE team_id IN ({placeholders})", team_ids).fetchall()
+      +    return rows
+expected:
+  max_findings: 0

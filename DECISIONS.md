@@ -90,7 +90,7 @@ The action also handles `issue_comment` events. `review` re-runs the pipeline; `
 
 ## D20 — Published model × strategy leaderboard
 
-The eval harness (`evals/run.py`) runs configurable strategies (samples, verifier, models via env) over a 17-fixture, 5-language set with hard negatives, and prints a labelled, cost-annotated table. The headline artifact: the same $0.14/M model goes from a naive single pass to the ensemble+verifier system, measured, with false-positive rates published. Honest numbers whatever they say — fixtures are never tuned to pass.
+The eval harness (`evals/run.py`) runs configurable strategies (samples, verifier, models, and the v2.5 levers via env) over a 37-fixture, 7-language set with hard negatives and misleading-title debias probes, and prints a labelled, cost-annotated table. The headline artifact: the same $0.14/M model goes from a naive single pass to the ensemble+verifier system, measured, with false-positive rates published. Honest numbers whatever they say — fixtures are never tuned to pass.
 
 ---
 
@@ -129,3 +129,35 @@ Two escape hatches for residual false positives (the retention metric): config g
 ## D28 — Review event, risk labels, readiness score
 
 `output.request_changes_at` submits the review as REQUEST_CHANGES at a chosen severity (a real review signal, not just a comment). `output.labels` applies risk labels (`security`/`needs-tests`/…) for triage (needs `issues: write`). A deterministic merge-readiness (0–100) and review-effort (1–5) line in the summary — computed from finding counts/severities, no extra LLM call. The ensemble's `support` count surfaces as a per-finding confidence signal nobody else shows.
+
+---
+
+# V2.5 decisions (the research levers — pushing cheap-model accuracy toward flagship at $0)
+
+Driven by two independent research passes (mine + a second via Kimi/Hermes), reconciled in the private synthesis. Each lever is a config toggle so the eval A/B is pure config. All are $0 running cost (prompt/orchestration only); the measurement spend was a few dollars of DeepSeek credit.
+
+**Measured outcome (the headline decision): all four levers ship OFF by default.** On `deepseek-v4-flash` over the expanded 37-fixture benchmark, 3 runs each: levers-off baseline = 101/111 (91%); debias+calibration = 98/111 (88%); debias-only ≈ 89% (one degraded run). Every lever arm landed *within run-to-run noise* of the baseline — no measurable accuracy gain. The honest-numbers rule forbids flipping a behavior-changing default without an eval that justifies it, so the levers stay opt-in (on together in `mode: thorough`). This is a feature of the discipline, not a failure of the work: we measured five research-backed ideas and declined to ship a regression dressed as a win. A first calibration cut actually *regressed* to ~86% by over-priming test-agent false positives on clean refactors; rebalancing the prompts toward precision brought it back to ≈baseline. The remaining spread in every arm is dominated by the same few hard fixtures (a validated query in a handler; a hardcoded secret under a calm title). See README leaderboard + `docs/V2.5_LEVERS_2026-06-13.md`.
+
+## D29 — Confirmation-bias debiasing (`accuracy.debias`, default off / opt-in)
+
+Both research passes ranked this the top free lever (arXiv 2603.18740: an explicit "judge the code, ignore the PR's framing" instruction recovers ~94% of bugs a misleading title otherwise masks). A reassuring title ("no behavior change", "add tests") makes a single-pass reviewer trust the diff; an alarming one makes it invent bugs in clean code. `_debias.md` is appended to every analyst prompt instructing it to review each line on its own merits as if the title were blank. It doubles as injection hardening — a hostile title can no longer lower scrutiny — and is measured on purpose-built misleading-title fixtures (`mt_*.yml`) that test both directions (real bug under a calm title; clean code under an alarming one). Rejected: stripping the title entirely (it carries genuine cross-file intent the analysts use); the instruction subordinates it without discarding it.
+
+## D30 — Calibration prefix (`accuracy.calibration`, default off / opt-in)
+
+Cheap models need their severity bar and precision anchored. Each analyst gets a small per-agent block (`<agent>_calibration.md`) of concrete FLAG / STAY-SILENT examples — deliberately balanced toward the stay-silent case, because the retention metric is the false-positive rate. Placed in the **stable, front-loaded** part of the system prompt so it sits in the provider's cached prefix (DeepSeek bills cached input ~1/50th), making the extra tokens nearly free per call. Rejected: one giant shared example block (poorer cache locality and dilutes each agent's lane).
+
+## D31 — Prompt-diverse ensemble lenses (`accuracy.lenses`, default off / opt-in)
+
+Self-MoA (2502.00674): same model + diverse *viewpoints* beats a temperature jitter and beats mixed-model ensembles. When sampling (`samples > 1`), the K samples get different lenses — plain, checklist-sweep, adversarial-auditor — carried as a short **user-message suffix** so the large, identical diff stays in the cached prefix. The vote + evidence anchoring + verifier absorb the extra adversarial noise. Measured ≈ baseline, so off by default; `mode: thorough` turns it on.
+
+## D32 — Chain-of-thought, verdict-first (`accuracy.cot`, default off / opt-in)
+
+PromptAudit (2605.24171) found reasoning-*last* drives abstention to 32.6% vs 9.2% for verdict-first, but standard CoT scored best overall — so we keep reasoning but emit each finding verdict-first (severity/category precede the prose) and allow an optional short top-level `analysis` scan. The parser already ignores non-finding keys and the ensemble votes on findings, never on reasoning traces, so this can't corrupt the vote. Off by default (the extra output tokens didn't earn their cost — measured ≈ baseline); `mode: thorough` turns it on.
+
+## D33 — Verifier upgraded to a rubric meta-judge
+
+Both research passes independently warned that multi-round *debate* amplifies bias (arXiv 2505.19477). Instead of adding an adversary agent, the kill-mandate is folded into the existing single-pass verifier as a rubric: for each finding, **argue the rejection first**, keep it only if the visible code survives that argument. Same node, same output schema, no extra call — a precision lever at zero added cost. Rejected: a separate adversarial agent + graph node (more surface, drifts toward the debate pattern the literature warns against).
+
+## D34 — Context A/B is measured on the live path, not the fixtures
+
+SWE-PRBench (2603.26130): every model reviewed *worse* as context grew (attention dilution). That challenges the shipped `review.context_lines: 8` default (D-A7). But context extension needs a head-ref fetch via the GitHub client, which the static-patch eval harness has no access to — so the fixtures can't measure it. The honest call: keep `context_lines` measurable only on the live path (a real PR with varying values), document it as the next live experiment, and do **not** claim a fixture-measured result it can't produce. The env knob is wired; the experiment is pending a live run on `pr-sentinel-test`.

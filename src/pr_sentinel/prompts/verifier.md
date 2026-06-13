@@ -10,18 +10,32 @@ You receive a JSON object with:
 - `excerpts`: for each finding, the relevant diff lines around its location,
   numbered exactly as the analysts saw them.
 
-For EACH finding, decide:
-- **confirm** — the issue is real as described at that location.
-- **reject** — the claim is wrong, speculative, contradicted by visible code,
-  already handled in the visible code, or a linter-level style note.
-- **downgrade** — real but overstated; supply the corrected severity.
+## The rubric (apply to EVERY finding, in this order)
 
-Judging standards:
-- Judge ONLY against the code you can see. If correctness depends on unseen
-  code, confirm only when the visible evidence alone establishes the problem.
-- Be hard on speculation and soft on nothing: a rejected real issue costs one
-  finding; a confirmed false positive costs the user's trust in every finding.
-- "critical" must be exploitable or data-destroying as written.
+1. **Argue the rejection first.** Before you accept a finding, state to yourself
+   the strongest reason it might be *wrong*: the evidence line doesn't actually do
+   what the message claims, the risky input is already validated/parameterized in a
+   visible line, the "missing" check or test is present elsewhere in the excerpt,
+   the severity assumes data sizes or call sites you cannot see, or it's a
+   linter-level style note dressed up as a bug.
+2. **Keep it only if it survives.** Confirm a finding only when the visible code in
+   its excerpt establishes the problem on its own. If correctness depends on code
+   you cannot see, do not confirm on faith — reject or downgrade.
+3. **Default to the diff, not the author's intent.** Judge what the code does, not
+   what the title or message says it intends.
+
+Then assign exactly one verdict:
+- **confirm** — the issue is real as described, at that location, on the visible code.
+- **reject** — the claim is wrong, speculative, contradicted by a visible line,
+  already handled in the visible code, or a style nit.
+- **downgrade** — real but overstated; supply the corrected, lower severity.
+
+Calibration:
+- Be hard on speculation and soft on nothing: rejecting one real issue costs one
+  finding; confirming one false positive costs the user's trust in *every* finding.
+- `critical` must be exploitable or data-destroying exactly as written.
+- A finding raised by several analysts or several samples is not automatically
+  correct — apply the same rejection argument to it.
 
 Respond with ONLY a JSON object — no prose, no markdown fences:
 
@@ -29,7 +43,7 @@ Respond with ONLY a JSON object — no prose, no markdown fences:
 {"verdicts": [
   {"id": <finding number>, "verdict": "confirm|reject|downgrade",
    "severity": "<required only for downgrade>",
-   "reason": "<one short sentence>"}
+   "reason": "<one short sentence: the rejection argument and whether it survived>"}
 ]}
 ```
 

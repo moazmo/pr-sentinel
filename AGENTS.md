@@ -6,7 +6,7 @@ PR Sentinel is a multi-agent code-review GitHub Action: five LLM agents (Archite
 
 ```bash
 pip install -e ".[dev]"        # setup (use a venv)
-pytest                         # 200 tests — LLM and GitHub API fully mocked, no network, no key
+pytest                         # 215 tests — LLM and GitHub API fully mocked, no network, no key
 ruff check src tests evals     # lint (line length 100)
 python evals/run.py --runs 3 --label flash-v2   # evals — REAL LLM; needs PR_SENTINEL_API_KEY
                                # env knobs: PR_SENTINEL_{BASE_URL,MODEL,SAMPLES,VERIFIER,
@@ -35,8 +35,8 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | `src/pr_sentinel/security.py` | Prompt sanitizer + output secret scrubbing |
 | `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch); accuracy/output blocks |
 | `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0; `@pr-sentinel` command dispatch (author-association gated) |
-| `tests/` | 200 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
-| `evals/` | 17 fixtures (5 languages, hard negatives, 2 injection vectors); `run.py` env-driven leaderboard runner |
+| `tests/` | 215 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config; `test_research_levers.py` pins the v2.5 lever wiring. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
+| `evals/` | 37 fixtures (7 languages, hard negatives, 2 injection vectors, misleading-title `mt_*` debias probes); `run.py` env-driven leaderboard runner (per-lever knobs, fail-fast timeouts, durable `_matrix.log`) |
 
 ## Invariants — never break these
 
@@ -55,6 +55,8 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 13. **Comment commands are author-association gated.** `@pr-sentinel` commands run only for OWNER/MEMBER/COLLABORATOR. Never widen this — it's the economic-DoS guard on the comment surface.
 14. **Suppression and custom instructions come from the base branch.** `review.suppress`, `agents.guidance`, `agents.instructions` are config — a hostile PR must never be able to suppress its own findings or inject prompt instructions. Inline `pr-sentinel: ignore` markers are the one exception (they live in the diff, on the line they silence, and only silence that spot).
 15. **One-click fixes only for single-line replacements.** A suggestion block replaces the anchored line; never emit one for a multi-line `fix`. The `fix` must survive anchoring + verifier before it's offered.
+16. **Accuracy levers are config toggles, and the default is the measured winner.** `accuracy.debias|calibration|lenses|cot` (v2.5) each map to an env knob in `evals/run.py` so the A/B is pure config. Never flip a default that changes review behavior without an eval that justifies it — same honest-numbers rule as fixtures. Run the matrix, ship what wins.
+17. **Preserve the cached prompt prefix.** Stable blocks (per-agent role, shared rules, calibration, debias, CoT instruction) are front-loaded in `analyst_system_prompt` and must stay byte-identical across calls; per-repo (language hint, guidance) and per-sample (ensemble lens) text goes *after* / into the user message. Reordering stable text behind variable text silently kills DeepSeek's prefix cache (~50× cost on those tokens).
 
 ## Conventions
 

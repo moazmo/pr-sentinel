@@ -1,0 +1,26 @@
+# New-language coverage (C#): path traversal — a user-supplied file name is
+# joined to a root and read with no containment check, so "../../etc/passwd"
+# escapes the directory.
+title: "Serve user-uploaded documents"
+files:
+  - path: Controllers/DocsController.cs
+    status: modified
+    patch: |
+      @@ -12,6 +12,12 @@ public class DocsController : Controller
+           [HttpGet("/docs/{name}")]
+           public IActionResult Get(string name)
+           {
+      +        var root = "/var/app/docs";
+      +        // read the requested document
+      +        var path = Path.Combine(root, name);
+      +        var text = System.IO.File.ReadAllText(path);
+      +        return Content(text);
+           }
+       }
+expected:
+  min_findings: 1
+  findings:
+    - agent: security
+      file: Controllers/DocsController.cs
+      category_contains: ["traversal", "path"]
+      min_severity: high

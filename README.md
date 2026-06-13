@@ -120,6 +120,13 @@ accuracy:
   verifier: true              # run the adjudication pass before the reviewer
   adaptive: true              # spend extra samples only on chunks that found something
   cross_file: false           # opt-in extra pass for cross-file issues (1 more call)
+  # Research levers (v2.5) — all opt-in, default off. Measured ≈ baseline on flash
+  # (no accuracy gain above the ensemble+verifier system), so off by default; on
+  # together in `mode: thorough`. Kept as honest, toggleable infrastructure.
+  debias: false               # judge the code on its own merits, ignore reassuring/alarming PR titles (also security hardening)
+  calibration: false          # per-agent flag/stay-silent anchors (stable, cached prompt prefix)
+  lenses: false               # give each ensemble sample a different lens (standard/checklist/adversarial)
+  cot: "off"                  # "brief" adds a short reasoning scan before the findings (off | brief)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -202,7 +209,16 @@ This is PR Sentinel's bet, and the thing that separates it from single-pass revi
 - **Line-numbered diffs (A1).** Analysts see absolute line numbers on every hunk line and cite the numbers they're shown — localization stops being a guess.
 - **Evidence anchoring (A2).** Every finding must quote the offending line. A deterministic pass checks that quote against the diff; **a finding whose evidence isn't literally in the code is dropped before it can post.** Hallucinations become structurally impossible, not just discouraged by a prompt.
 - **Self-consistency ensemble (A3).** Each analyst reviews three times; findings are majority-voted. A one-off miss or a one-off hallucination doesn't survive the vote. DeepSeek's prompt caching makes 3× sampling cost ~1.3×, not 3×.
-- **Verifier pass (A4).** A separate agent adjudicates every surviving finding against the numbered diff — confirm / reject / downgrade — before the reviewer writes a word.
+- **Verifier pass (A4).** A separate agent adjudicates every surviving finding against the numbered diff — confirm / reject / downgrade — before the reviewer writes a word. It runs a **rubric meta-judge** (argue the rejection first; keep a finding only if the visible code survives) — single pass, no debate, which the research shows amplifies bias rather than reducing it.
+
+**v2.5 added four more $0 levers — and measured them honestly.** Each is a config toggle; all ship **off by default** because, on cheap `deepseek-v4-flash` over the 37-fixture benchmark, every lever arm landed *within run-to-run noise of the levers-off baseline* — no measurable accuracy gain. We don't flip a default that changes review behavior without an eval that justifies it, so they stay opt-in (and turn on together in `mode: thorough` for max-recall users):
+
+- **Confirmation-bias debiasing (`debias`).** Judge each line on its own merits, ignore the PR title's framing — a reassuring title can't hide a real bug, an alarming one can't conjure a fake one. Accuracy-neutral here, but real **injection hardening**, so it's the lever most worth enabling.
+- **Calibration anchors (`calibration`).** Per-agent *flag / stay-silent* examples in the cached prompt prefix (nearly free per call) to pin a cheap model's severity bar.
+- **Prompt-diverse ensemble (`lenses`).** Ensemble samples take different viewpoints (plain / checklist / adversarial) instead of only a temperature jitter.
+- **Verdict-first chain-of-thought (`cot`).** An optional short reasoning scan, with each finding emitted verdict-first (the ordering that minimizes abstention).
+
+The honest result — *levers that didn't beat the baseline get shipped off, not dressed up as a win* — is the same discipline as the leaderboard below.
 
 ### The leaderboard
 
@@ -217,6 +233,18 @@ The system turns a budget model from "good with the occasional false positive on
 
 The fixture set includes seeded bugs (SQL injection, XSS, path traversal, hardcoded secret, N+1, blocking-async, leaky abstraction, untested money-code) in Python / JS / TS / Go / Java, **hard negatives** (correctly-parameterized SQL that looks scary; a bounded loop that looks O(n²)), and **two prompt-injection vectors** (in the diff and in the PR title) — both of which leak nothing and get flagged as attacks.
 
+#### v2.5 — harder benchmark, and the levers measured honestly
+
+The benchmark was expanded to **37 fixtures across 7 languages** (added Ruby + C#, new bug classes — SSRF, insecure deserialization, `eval`, open redirect, ReDoS, secret-logging, weak crypto, TLS-disabled — more clean false-positive controls, and **misleading-title `mt_*` fixtures** that plant a real bug under a calm title or clean code under an alarming one, to measure debiasing). On this harder set, 3 runs each on `deepseek-v4-flash`:
+
+| Config | Passed (3×37 = 111) | Notes |
+|---|---|---|
+| **PR Sentinel system (ensemble + verifier)** | **101/111 (91%)** | the shipped baseline |
+| + debias + calibration | 98/111 (88%) | within noise |
+| + debias only | ~89% (run-to-run) | within noise |
+
+The five research levers (debias, calibration, diverse lenses, verdict-first CoT, rubric verifier) **land within flash's run-to-run variance of the baseline** — no measurable accuracy gain — so they ship **off by default**, opt-in via config or `mode: thorough`. The spread in every arm is dominated by the same handful of genuinely hard fixtures (a validated query in a handler that tempts a false positive; a hardcoded secret under a "style: rename" title that flash just doesn't reliably catch). Publishing a lever as a win it didn't earn would be exactly the fixture-tuning this project refuses to do.
+
 Reproduce with your own key:
 
 ```bash
@@ -224,7 +252,7 @@ PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
 PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**200 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**215 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
 
 ## On-demand commands
 

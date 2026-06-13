@@ -29,6 +29,17 @@ from pr_sentinel.models import ChangedFile, Finding, PRMetadata, Severity  # noq
 from pr_sentinel.provider import OpenAICompatProvider, estimate_cost_usd  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+MATRIX_LOG = Path(__file__).parent / "_matrix.log"
+
+
+def log_matrix(line: str) -> None:
+    """Append a line to the durable matrix log (survives a dead shell wrapper /
+    machine sleep — the long-run failure mode we kept hitting)."""
+    try:
+        with open(MATRIX_LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"{date.today().isoformat()} {line}\n")
+    except OSError:
+        pass
 
 
 def load_fixture(path: Path) -> dict:
@@ -88,9 +99,27 @@ def config_from_env() -> SentinelConfig:
         config.accuracy.min_support = 1
     config.provider.analyst_model = os.environ.get("PR_SENTINEL_ANALYST_MODEL") or None
     config.provider.review_model = os.environ.get("PR_SENTINEL_REVIEW_MODEL") or None
-    # No GitHub in evals: review hunks as-is, no inline posting, no context fetch.
+
+    # V2.5 research levers — each a single env knob so the A/B matrix is pure
+    # config (RESEARCH_SYNTHESIS_2026-06-12). Defaults mirror the shipped config
+    # so an unset env reproduces the product's behavior.
+    def _flag(name: str, default: bool) -> bool:
+        return os.environ.get(name, str(default)).lower() not in ("false", "0", "no")
+
+    config.accuracy.debias = _flag("PR_SENTINEL_DEBIAS", config.accuracy.debias)
+    config.accuracy.calibration = _flag("PR_SENTINEL_CALIBRATION", config.accuracy.calibration)
+    config.accuracy.lenses = _flag("PR_SENTINEL_LENSES", config.accuracy.lenses)
+    config.accuracy.cot = os.environ.get("PR_SENTINEL_COT", config.accuracy.cot)
+
+    # No GitHub in evals: review hunks as-is, no inline posting. context_lines
+    # has no effect here (extension needs a head-ref fetch via the GitHub
+    # client); the context A/B is measured on the live path, not these static
+    # fixtures — see docs/RESEARCH_SYNTHESIS context note.
     config.review.context_lines = 0
     config.output.inline = False
+    # Match the provider's fail-fast timeout / concurrency (see main()).
+    config.limits.agent_timeout_seconds = 45
+    config.limits.max_concurrent_requests = 4
     return config
 
 
@@ -118,7 +147,13 @@ async def main() -> int:
         return 2
     base_url = os.environ.get("PR_SENTINEL_BASE_URL", "https://api.openai.com/v1")
     model = os.environ.get("PR_SENTINEL_MODEL", "gpt-5-mini")
-    provider = OpenAICompatProvider(api_key, base_url=base_url, model=model)
+    # Tighter than the product defaults: under a degraded/rate-limited endpoint a
+    # 120s timeout makes a whole arm crawl for an hour. Fail a stuck call fast,
+    # let the analyst degrade to [], keep the run moving. Lower concurrency also
+    # eases the rate-limiting that triggers the degradation in the first place.
+    provider = OpenAICompatProvider(
+        api_key, base_url=base_url, model=model, max_concurrent=4, timeout_seconds=45
+    )
     config = config_from_env()
 
     runs = 1
@@ -129,13 +164,26 @@ async def main() -> int:
         label = sys.argv[sys.argv.index("--label") + 1]
 
     fixtures = sorted(FIXTURES_DIR.glob("*.yml"))
+    # --limit N runs only the first N fixtures (cheap smoke/cost probe).
+    if "--limit" in sys.argv:
+        fixtures = fixtures[: max(1, int(sys.argv[sys.argv.index("--limit") + 1]))]
+    # --only SUBSTR runs only fixtures whose name contains SUBSTR.
+    if "--only" in sys.argv:
+        needle = sys.argv[sys.argv.index("--only") + 1]
+        fixtures = [p for p in fixtures if needle in p.stem]
     # results[name] = list of failure-lists, one per run (empty list = pass)
     results: dict[str, list[list[str]]] = {p.stem: [] for p in fixtures}
     total_in = total_out = total_cached = 0
 
+    lever_cfg = (
+        f"samples={config.accuracy.samples} verifier={config.accuracy.verifier} "
+        f"debias={config.accuracy.debias} calibration={config.accuracy.calibration} "
+        f"lenses={config.accuracy.lenses} cot={config.accuracy.cot}"
+    )
     for run_index in range(1, runs + 1):
         if runs > 1:
             print(f"--- run {run_index}/{runs} ---")
+        run_pass = 0
         for path in fixtures:
             fixture = load_fixture(path)
             findings, comment, usage = await run_fixture(provider, fixture, config)
@@ -145,9 +193,13 @@ async def main() -> int:
                 total_cached += usage.total_cached
             failures = check_expectations(path.stem, fixture, findings, comment)
             results[path.stem].append(failures)
+            if not failures:
+                run_pass += 1
             status = "✅ pass" if not failures else "❌ FAIL"
             detail = "; ".join(failures) if failures else f"{len(findings)} finding(s)"
             print(f"[{status}] {path.stem}: {detail}")
+        # Durable per-run line: even if a later run dies, this one is banked.
+        log_matrix(f"[{label} run{run_index}/{runs}] {run_pass}/{len(fixtures)} | {lever_cfg}")
 
     total_passes = sum(1 for runs_list in results.values() for f in runs_list if not f)
     total_cells = len(fixtures) * runs
@@ -158,13 +210,17 @@ async def main() -> int:
     cache_pct = (100 * total_cached // total_in) if total_in else 0
     print(
         f"\n[{label}] samples={config.accuracy.samples} verifier={config.accuracy.verifier} "
+        f"debias={config.accuracy.debias} calibration={config.accuracy.calibration} "
+        f"lenses={config.accuracy.lenses} cot={config.accuracy.cot} "
         f"analyst={analyst_model} review={config.provider.resolved_review_model}"
     )
-    print(
+    summary = (
         f"[{label}] {total_passes}/{total_cells} passed · "
         f"~{(total_in + total_out) / 1000:.0f}k tokens ({cache_pct}% cached) · "
         f"≈${per_pr:.4f}/fixture-run"
     )
+    print(summary)
+    log_matrix(f"{summary}  | {lever_cfg} runs={runs}")
 
     print("\n--- README table ---\n")
     print(f"Evals: {runs} run(s) on `{model}` [{label}], {date.today().isoformat()}:\n")

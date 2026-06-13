@@ -1,0 +1,28 @@
+# Clean fixture (false-positive control): new logic shipped together with a test
+# that plausibly covers it — the GOOD case. The test agent must stay quiet rather
+# than demand more coverage.
+title: "Add percentage helper"
+files:
+  - path: util/math.py
+    status: added
+    patch: |
+      @@ -0,0 +1,9 @@
+      +def percent(part: float, whole: float) -> float:
+      +    """Return part/whole as a percentage, 0.0 when whole is zero."""
+      +    if whole == 0:
+      +        return 0.0
+      +    return round(part / whole * 100, 2)
+  - path: tests/test_math.py
+    status: added
+    patch: |
+      @@ -0,0 +1,8 @@
+      +from util.math import percent
+      +
+      +
+      +def test_percent_basic():
+      +    assert percent(1, 4) == 25.0
+      +
+      +def test_percent_zero_whole():
+      +    assert percent(5, 0) == 0.0
+expected:
+  max_findings: 0

@@ -20,6 +20,18 @@ on:
       verifier:
         description: "Run the verifier pass (true/false)"
         default: "true"
+      debias:
+        description: "Confirmation-bias debiasing (true/false)"
+        default: "false"
+      calibration:
+        description: "Per-agent calibration prefix (true/false)"
+        default: "false"
+      lenses:
+        description: "Diverse ensemble lenses (true/false)"
+        default: "false"
+      cot:
+        description: "Chain-of-thought (off | brief)"
+        default: "off"
 
 permissions:
   contents: read
@@ -40,6 +52,10 @@ jobs:
           PR_SENTINEL_BASE_URL: ${{ inputs.base_url }}
           PR_SENTINEL_SAMPLES: ${{ inputs.samples }}
           PR_SENTINEL_VERIFIER: ${{ inputs.verifier }}
+          PR_SENTINEL_DEBIAS: ${{ inputs.debias }}
+          PR_SENTINEL_CALIBRATION: ${{ inputs.calibration }}
+          PR_SENTINEL_LENSES: ${{ inputs.lenses }}
+          PR_SENTINEL_COT: ${{ inputs.cot }}
           PYTHONUTF8: "1"
         run: |
           python evals/run.py --runs ${{ inputs.runs }} --label dispatch | tee eval_output.txt

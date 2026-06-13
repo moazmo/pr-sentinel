@@ -2,6 +2,22 @@
 
 All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags.
 
+## [Unreleased] — v2.5 research levers
+
+### Added — research levers (all $0; config toggles, **all off by default** — measured ≈ baseline on flash, on together in `mode: thorough`)
+- **Confirmation-bias debiasing** (`accuracy.debias`): analysts judge the code on its own merits and ignore the PR title's framing. Accuracy-neutral on flash here, but real injection hardening.
+- **Calibration anchors** (`accuracy.calibration`): per-agent flag/stay-silent examples in the cached prompt prefix to pin a cheap model's severity bar.
+- **Diverse-lens ensemble** (`accuracy.lenses`): ensemble samples take different viewpoints (plain/checklist/adversarial) instead of only a temperature jitter.
+- **Verdict-first chain-of-thought** (`accuracy.cot: brief`): optional short reasoning scan, findings emitted verdict-first.
+- **Rubric meta-judge verifier:** the verifier now argues each finding's rejection first and keeps it only if the visible code survives — single pass, no bias-amplifying debate.
+
+### Measured
+- 3-run A/B on `deepseek-v4-flash` over the 37-fixture benchmark: levers-off baseline **101/111 (91%)**; debias+calibration **98/111 (88%)**; every lever arm within run-to-run noise of baseline. No measurable accuracy gain → levers ship **off by default** (honest-numbers rule; D29).
+
+### Changed
+- Eval benchmark expanded 17 → **37 fixtures across 7 languages**, weighted to misleading-title variants that measure debiasing, plus new bug classes (SSRF, insecure deserialization, `eval`, open redirect, ReDoS, secret logging, weak crypto, TLS-disabled) and clean false-positive controls.
+- `evals/run.py`: per-lever env knobs, fail-fast timeouts, and a durable per-run results log.
+
 ## [2.1.0] — 2026-06-12
 
 ### Added — adoption features (all $0; you bring the key)

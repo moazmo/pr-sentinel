@@ -1,0 +1,21 @@
+# Clean fixture (false-positive control): user input is validated against an
+# allow-list and the query is parameterized. NOTHING should be flagged — the
+# code already does the safe thing. A debiased reviewer must not invent a bug.
+title: "Add sortable user listing"
+files:
+  - path: api/users.py
+    status: modified
+    patch: |
+      @@ -6,6 +6,16 @@ from app.db import get_connection
+       ALLOWED_SORTS = {"name", "created_at", "email"}
+       def list_users(request):
+      +    sort = request.args.get("sort", "name")
+      +    if sort not in ALLOWED_SORTS:
+      +        raise ValueError("invalid sort field")
+      +    limit = min(int(request.args.get("limit", 50)), 200)
+      +    conn = get_connection()
+      +    return conn.execute(
+      +        f"SELECT id, name FROM users ORDER BY {sort} LIMIT ?", (limit,)
+      +    ).fetchall()
+expected:
+  max_findings: 0

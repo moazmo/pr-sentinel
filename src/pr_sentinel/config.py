@@ -70,6 +70,34 @@ class AccuracyConfig(BaseModel):
     # Opt-in final pass that flags cross-file issues per-file analysts miss
     # (V2 P13). One extra LLM call.
     cross_file: bool = False
+    # --- V2.5 research levers (RESEARCH_SYNTHESIS_2026-06-12) -------------------
+    # All four ship OFF by default. They were built from two independent research
+    # passes and A/B-measured on the 37-fixture benchmark: on cheap flash, every
+    # lever arm landed within run-to-run noise of the levers-off baseline (91%) —
+    # no measurable accuracy gain. Honest-numbers rule (CLAUDE.md / D29): we don't
+    # flip a default that changes review behavior without an eval that justifies
+    # it, so they stay opt-in. `mode: thorough` turns them on for max-recall users.
+    # See docs/V2.5_LEVERS_2026-06-13.md and DECISIONS D29-D34.
+    #
+    # Confirmation-bias debiasing (L1): judge the code on its own merits, ignore
+    # the PR title's reassurance/alarm (arXiv 2603.18740). Accuracy-neutral on
+    # flash here, but real security value (a hostile title can't lower scrutiny),
+    # so it's the lever most worth enabling — opt-in.
+    debias: bool = False
+    # Calibration prefix (L5): per-agent when-to-flag / when-to-stay-silent
+    # anchors, front-loaded so they sit in the cached prefix (~free per call).
+    # Measured ≈ baseline (a first cut over-primed test-agent false positives;
+    # the precision-rebalanced version is neutral). Opt-in.
+    calibration: bool = False
+    # Chain-of-thought (L2/L3): "off" | "brief". "brief" emits a short top-level
+    # `analysis` scan before the findings array (parser ignores non-finding keys;
+    # the ensemble votes on findings, not reasoning). Verdict-first per finding
+    # (PromptAudit 2605.24171). Opt-in; on in `thorough`.
+    cot: str = "off"
+    # Prompt-diverse ensemble (L4): when sampling (samples > 1), give each sample
+    # a different lens (standard / checklist / adversarial) instead of only a
+    # temperature jitter (Self-MoA, 2502.00674). Opt-in; on in `thorough`.
+    lenses: bool = False
 
 
 class AgentsConfig(BaseModel):
@@ -149,11 +177,21 @@ class SentinelConfig(BaseModel):
             self.accuracy.samples = 1
             self.accuracy.min_support = 1
             self.accuracy.verifier = False
+            self.accuracy.debias = False
+            self.accuracy.calibration = False
+            self.accuracy.lenses = False
+            self.accuracy.cot = "off"
         elif self.mode == "thorough":
             self.accuracy.samples = 3
             self.accuracy.min_support = 2
             self.accuracy.verifier = True
-        # "balanced" / "" keep the defaults (samples=3, verifier on).
+            # Max-recall: turn on every research lever for users who want them.
+            self.accuracy.debias = True
+            self.accuracy.calibration = True
+            self.accuracy.lenses = True
+            self.accuracy.cot = "brief"
+        # "balanced" / "" keep the defaults (samples=3, verifier on, research
+        # levers off — measured ≈ baseline on flash, so off by default; D29).
 
     # Not user-facing config; carries parse warnings into the final comment.
     warnings: list[str] = Field(default_factory=list)

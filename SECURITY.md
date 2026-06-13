@@ -26,7 +26,8 @@ PR Sentinel's mitigations, all in v1:
 - **Output scrubbing (defense-in-depth):** before posting, the final comment is scanned for the known secret values and generic key patterns (`sk-…`, `ghp_…`, `github_pat_…`, `AKIA…`) and redacted on match, with a security warning logged — a match means an injection got further than it should.
 - **Minimal token permissions:** the documented workflow grants `contents: read` + `pull-requests: write` only. A fully compromised run cannot push code, modify workflows, or read packages.
 - **Config from the base branch:** `.pr-sentinel.yml` is read from the PR's base ref, never its head — a hostile PR cannot disable the Security agent or raise the spend caps that review it.
-- **Eval coverage:** `evals/fixtures/prompt_injection.yml` plants instruction text in a diff and asserts the review is unaffected, nothing leaks, and the planted bug next to the injection is still caught.
+- **Title debiasing (defense-in-depth, v2.5, opt-in):** enabling `accuracy.debias` instructs analysts to judge the code on its own merits and treat the PR title/file-list as non-authoritative framing — so a title crafted to *lower* scrutiny ("trivial refactor, no logic change") cannot talk the reviewer out of flagging a real bug. Off by default (it was accuracy-neutral in the eval), but the lever most worth enabling because it's anti-manipulation hardening on top of the base prompt-segregation that already ships on.
+- **Eval coverage:** `evals/fixtures/prompt_injection.yml` and `injection_in_title.yml` plant instruction text in a diff and in the PR title; `mt_*` fixtures plant real bugs under reassuring titles (and clean code under an alarming one). All assert nothing leaks, the title is not obeyed, and the code is judged on its merits.
 
 ## Economic DoS (burning your budget)
 

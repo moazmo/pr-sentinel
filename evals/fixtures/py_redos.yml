@@ -1,0 +1,21 @@
+# New bug class: regular-expression denial of service (ReDoS). A catastrophic-
+# backtracking pattern is run against user-supplied input, so a crafted string
+# pins CPU. Belongs to performance (hot-path blow-up) or security (DoS).
+title: "Validate uploaded usernames"
+files:
+  - path: validators/username.py
+    status: modified
+    patch: |
+      @@ -1,5 +1,9 @@
+       import re
+       def is_valid(name: str) -> bool:
+      -    return 1 <= len(name) <= 32
+      +    # allow letters, optionally grouped and repeated
+      +    pattern = re.compile(r"^(a+)+$")
+      +    return bool(pattern.match(name))
+expected:
+  min_findings: 1
+  findings:
+    - file: validators/username.py
+      category_contains: ["redos", "regex", "backtrack", "denial", "dos"]
+      min_severity: medium
