@@ -176,6 +176,37 @@ def build_graph(
 
         return analyst
 
+    async def sast_node(state: ReviewState) -> dict:
+        """SAST grounding (L1): scan the changed files with Semgrep and emit its
+        hits as candidate findings (same `findings` reducer as the analysts), so
+        they flow through anchoring + the verifier's triage. Fail-open and
+        opt-in; needs the head-ref contents, so it's a live-path feature."""
+        config: SentinelConfig = state["config"]
+        if config.dry_run or not config.sast.enabled or github is None:
+            return {}
+        head = state["pr"].head_sha
+        files = [f for f in state.get("files", []) if not f.skipped and f.patch]
+        if not head or not files:
+            return {}
+        from .diffmap import added_line_numbers, line_text_map
+        from .sast import semgrep_findings
+
+        async def _fetch(f):
+            try:
+                return f.path, await github.get_file_from_ref(f.path, head)
+            except Exception:  # noqa: BLE001 — SAST is best-effort
+                return f.path, None
+
+        contents = {p: c for p, c in await asyncio.gather(*(_fetch(f) for f in files)) if c}
+        if not contents:
+            return {}
+        added = {f.path: added_line_numbers(f.patch or "") for f in files}
+        line_text = {f.path: line_text_map(f.patch or "") for f in files}
+        findings = semgrep_findings(contents, added, line_text, rules=config.sast.rules)
+        if findings:
+            logger.info("SAST (Semgrep) contributed %d candidate finding(s).", len(findings))
+        return {"findings": findings}
+
     def merge_node(state: ReviewState) -> dict:
         config: SentinelConfig = state["config"]
         files = state.get("files", [])
@@ -365,6 +396,11 @@ def build_graph(
         graph.add_node(agent.value, make_analyst_node(agent))
         graph.add_edge("ingest", agent.value)
         graph.add_edge(agent.value, "merge_findings")
+    # SAST runs as an extra fan-in branch alongside the analysts; its candidate
+    # findings land in the same `findings` reducer and merge at merge_findings.
+    graph.add_node("sast", sast_node)
+    graph.add_edge("ingest", "sast")
+    graph.add_edge("sast", "merge_findings")
     graph.add_node("merge_findings", merge_node)
     graph.add_node("verifier", verifier_node)
     graph.add_node("cross_file", cross_file_node)

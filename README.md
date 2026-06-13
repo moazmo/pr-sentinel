@@ -127,6 +127,11 @@ accuracy:
   calibration: false          # per-agent flag/stay-silent anchors (stable, cached prompt prefix)
   lenses: false               # give each ensemble sample a different lens (standard/checklist/adversarial)
   cot: "off"                  # "brief" adds a short reasoning scan before the findings (off | brief)
+  # Reasoning controls (DeepSeek V4: thinking is a parameter, on by default).
+  # analyst_thinking is DeepSeek-specific and endpoint-safe (only sent when set).
+  # Measured: disabling thinking tanks accuracy (~91%→61%), so leave it on.
+  analyst_thinking: null      # null = provider default (DeepSeek = on); false/true to force
+  reasoning_effort: ""        # "" | low | medium | high (depth when thinking is on)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -147,6 +152,9 @@ output:
   labels: false               # apply risk labels (security / needs-tests / …) to the PR
 gate:
   level: "off"                # fail a Check Run at/above this severity so merges can be required
+sast:
+  enabled: false              # run Semgrep over changed files; hits go through the verifier's triage
+  rules: "auto"               # semgrep --config value (needs Semgrep in the runner; opt-in, live-path)
 describe: false               # maintain a generated summary in the PR body
 dry_run: false                # estimate cost, post the estimate, no LLM calls
 ```

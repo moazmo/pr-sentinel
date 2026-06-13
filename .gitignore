@@ -27,3 +27,4 @@ Thumbs.db
 # Eval outputs (results are summarized in README, raw runs stay local)
 evals/results/
 evals/_matrix.log
+evals/_realpr_cache.json

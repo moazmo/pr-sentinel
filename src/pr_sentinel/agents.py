@@ -260,6 +260,8 @@ async def run_analyst(
                         temperature=temperature,
                         model=config.provider.resolved_analyst_model,
                         json_mode=True,
+                        thinking=config.accuracy.analyst_thinking,
+                        reasoning_effort=config.accuracy.reasoning_effort or None,
                     ),
                     timeout=config.limits.agent_timeout_seconds,
                 )

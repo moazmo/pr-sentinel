@@ -15,7 +15,7 @@ from pr_sentinel.agents import (
 from pr_sentinel.chunking import apply_skip_rules, build_chunks, build_pr_map
 from pr_sentinel.config import SentinelConfig, load_config
 from pr_sentinel.models import AgentName
-from tests.conftest import MockProvider, make_file
+from tests.conftest import MockProvider, make_file, single_sample_config
 
 
 def _chunks_and_map(config):
@@ -155,3 +155,71 @@ class TestVerifierRubric:
         prompt = load_prompt("verifier")
         assert "Argue the rejection first" in prompt
         assert '"verdicts"' in prompt  # output schema unchanged
+
+
+class _CapturingClient:
+    """Minimal httpx.AsyncClient stand-in that captures the JSON payload."""
+
+    def __init__(self):
+        self.payloads = []
+
+    is_closed = False
+
+    async def post(self, url, json, headers):
+        self.payloads.append(json)
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "choices": [{"message": {"content": "[]"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+
+        return _Resp()
+
+
+class TestReasoningControls:
+    def test_config_defaults(self):
+        acc = SentinelConfig().accuracy
+        assert acc.analyst_thinking is None  # leave provider default (DeepSeek = on)
+        assert acc.reasoning_effort == ""
+
+    async def test_payload_omits_thinking_when_none(self):
+        from pr_sentinel.provider import OpenAICompatProvider
+
+        p = OpenAICompatProvider("k")
+        p._client = _CapturingClient()
+        await p.complete("s", "u", max_tokens=10, thinking=None)
+        assert "thinking" not in p._client.payloads[0]  # endpoint-safe default
+
+    async def test_payload_disables_thinking(self):
+        from pr_sentinel.provider import OpenAICompatProvider
+
+        p = OpenAICompatProvider("k")
+        p._client = _CapturingClient()
+        await p.complete("s", "u", max_tokens=10, thinking=False)
+        assert p._client.payloads[0]["thinking"] == {"type": "disabled"}
+
+    async def test_payload_enables_thinking_with_effort(self):
+        from pr_sentinel.provider import OpenAICompatProvider
+
+        p = OpenAICompatProvider("k")
+        p._client = _CapturingClient()
+        await p.complete("s", "u", max_tokens=10, thinking=True, reasoning_effort="high")
+        assert p._client.payloads[0]["thinking"] == {"type": "enabled"}
+        assert p._client.payloads[0]["reasoning_effort"] == "high"
+
+    async def test_run_analyst_passes_thinking_from_config(self):
+        config = single_sample_config()
+        config.accuracy.analyst_thinking = False
+        config.accuracy.reasoning_effort = "low"
+        # reasoning_effort only rides along when thinking is enabled, so also
+        # assert the thinking flag is forwarded verbatim.
+        chunks, pr_map = _chunks_and_map(config)
+        provider = MockProvider()
+        await run_analyst(AgentName.SECURITY, provider, pr_map, chunks, config)
+        assert provider.calls[0]["thinking"] is False
+        assert provider.calls[0]["reasoning_effort"] == "low"

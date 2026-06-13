@@ -22,10 +22,11 @@ class MockProvider:
         self.calls: list[dict] = []
 
     async def complete(self, system, user, *, max_tokens, temperature=0.1,
-                       model=None, json_mode=False):
+                       model=None, json_mode=False, thinking=None, reasoning_effort=None):
         self.calls.append(
             {"system": system, "user": user, "max_tokens": max_tokens,
-             "temperature": temperature, "model": model, "json_mode": json_mode}
+             "temperature": temperature, "model": model, "json_mode": json_mode,
+             "thinking": thinking, "reasoning_effort": reasoning_effort}
         )
         text = self.default
         for needle, response in self.responses.items():
@@ -37,7 +38,7 @@ class MockProvider:
 
 class FailingProvider:
     async def complete(self, system, user, *, max_tokens, temperature=0.1,
-                       model=None, json_mode=False):
+                       model=None, json_mode=False, thinking=None, reasoning_effort=None):
         from pr_sentinel.provider import ProviderError
 
         raise ProviderError("simulated failure")
@@ -51,7 +52,7 @@ class SequenceProvider:
         self.calls: list[dict] = []
 
     async def complete(self, system, user, *, max_tokens, temperature=0.1,
-                       model=None, json_mode=False):
+                       model=None, json_mode=False, thinking=None, reasoning_effort=None):
         index = min(len(self.calls), len(self.responses) - 1)
         self.calls.append({"system": system, "user": user})
         return CompletionResult(

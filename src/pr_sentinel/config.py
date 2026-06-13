@@ -97,7 +97,20 @@ class AccuracyConfig(BaseModel):
     # Prompt-diverse ensemble (L4): when sampling (samples > 1), give each sample
     # a different lens (standard / checklist / adversarial) instead of only a
     # temperature jitter (Self-MoA, 2502.00674). Opt-in; on in `thorough`.
+    # NOTE: DeepSeek V4 thinking mode ignores temperature, so when analyst_thinking
+    # is on, lenses are the ONLY working diversity source for the ensemble.
     lenses: bool = False
+    # Reasoning controls (DeepSeek V4: thinking is a request parameter, ON by
+    # default; temperature is inert while thinking is enabled). These are
+    # DeepSeek-specific — the `thinking` field is only sent to the provider when
+    # NOT None, so non-DeepSeek OpenAI-compatible endpoints are unaffected by the
+    # default. `analyst_thinking`: None = leave the provider default (DeepSeek =
+    # on); False = disable for the four analysts (~5 vs ~700 output tokens per
+    # call AND restores temperature-driven ensemble diversity); True = force on.
+    # The verifier/reviewer keep the provider default (they're the judgment gate).
+    # `reasoning_effort` ("" | low | medium | high) tunes depth when thinking is on.
+    analyst_thinking: bool | None = None
+    reasoning_effort: str = ""
 
 
 class AgentsConfig(BaseModel):
@@ -145,6 +158,19 @@ class OutputConfig(BaseModel):
     labels: bool = False
 
 
+class SastConfig(BaseModel):
+    """SAST grounding (research lever L1): run Semgrep over the changed files and
+    feed its hits into the pipeline as candidate findings the verifier triages.
+    Off by default — it needs Semgrep in the runner image and the head-ref file
+    contents (live path only; the static-fixture eval can't exercise it). Hits are
+    filtered to added lines and go through the same anchoring + verifier as any
+    finding, so the rule engine's noise is filtered by the LLM (SAST-Genius pattern)."""
+
+    enabled: bool = False
+    # Semgrep --config value: "auto" | a registry pack (e.g. "p/ci") | a path.
+    rules: str = "auto"
+
+
 class GateConfig(BaseModel):
     """Merge-gating via a GitHub Check Run (V2 P2). The check fails when an
     unresolved finding is at/above `level`; "off" never fails the check."""
@@ -163,6 +189,7 @@ class SentinelConfig(BaseModel):
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     gate: GateConfig = Field(default_factory=GateConfig)
+    sast: SastConfig = Field(default_factory=SastConfig)
     # Maintain a PR description between markers in the PR body (V2 B4).
     describe: bool = False
     dry_run: bool = False

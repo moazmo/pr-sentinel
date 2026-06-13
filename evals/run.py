@@ -110,6 +110,17 @@ def config_from_env() -> SentinelConfig:
     config.accuracy.calibration = _flag("PR_SENTINEL_CALIBRATION", config.accuracy.calibration)
     config.accuracy.lenses = _flag("PR_SENTINEL_LENSES", config.accuracy.lenses)
     config.accuracy.cot = os.environ.get("PR_SENTINEL_COT", config.accuracy.cot)
+    # Reasoning controls (DeepSeek V4). PR_SENTINEL_ANALYST_THINKING: on|off|<unset>
+    # (unset = provider default = thinking on for flash); PR_SENTINEL_REASONING_EFFORT:
+    # low|medium|high|<unset>.
+    _think = os.environ.get("PR_SENTINEL_ANALYST_THINKING", "").lower()
+    if _think in ("on", "true", "1"):
+        config.accuracy.analyst_thinking = True
+    elif _think in ("off", "false", "0"):
+        config.accuracy.analyst_thinking = False
+    config.accuracy.reasoning_effort = os.environ.get(
+        "PR_SENTINEL_REASONING_EFFORT", config.accuracy.reasoning_effort
+    )
 
     # No GitHub in evals: review hunks as-is, no inline posting. context_lines
     # has no effect here (extension needs a head-ref fetch via the GitHub
@@ -178,7 +189,8 @@ async def main() -> int:
     lever_cfg = (
         f"samples={config.accuracy.samples} verifier={config.accuracy.verifier} "
         f"debias={config.accuracy.debias} calibration={config.accuracy.calibration} "
-        f"lenses={config.accuracy.lenses} cot={config.accuracy.cot}"
+        f"lenses={config.accuracy.lenses} cot={config.accuracy.cot} "
+        f"analyst_thinking={config.accuracy.analyst_thinking} effort={config.accuracy.reasoning_effort or '-'}"
     )
     for run_index in range(1, runs + 1):
         if runs > 1:

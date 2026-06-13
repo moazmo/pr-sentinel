@@ -1,6 +1,6 @@
 [project]
 name = "pr-sentinel"
-version = "2.5.0"
+version = "2.6.0"
 description = "Multi-agent code review for pull requests - runs in your CI, bring your own key, shows which agent found what."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -28,7 +28,8 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | `src/pr_sentinel/suppression.py` | **V2.1:** drop findings by config glob or inline `pr-sentinel: ignore` marker (pure) |
 | `src/pr_sentinel/prompts/*.md` | Agent system prompts — **product surface**, readable markdown |
 | `src/pr_sentinel/merge.py` | Deterministic dedup/clustering + self-consistency `vote_findings` — pure, most-tested code |
-| `src/pr_sentinel/provider.py` | Thin OpenAI-compat + native Anthropic clients; the ONLY place secrets live; json-mode, pooled client |
+| `src/pr_sentinel/provider.py` | Thin OpenAI-compat + native Anthropic clients; the ONLY place secrets live; json-mode, pooled client, **V2.6 reasoning controls** (`thinking`/`reasoning_effort`, sent only when set) |
+| `src/pr_sentinel/sast.py` | **V2.6:** SAST grounding — run Semgrep, parse hits to candidate Findings (added lines only) for the verifier to triage; opt-in, live-path (D35) |
 | `src/pr_sentinel/github_client.py` | Paginated files API, sticky upsert, inline review API, PR-body describe, base-branch config |
 | `src/pr_sentinel/chunking.py` | PR map, numbered file blocks, token budgets, disclosed truncation, file-priority ranking |
 | `src/pr_sentinel/formatter.py` | Comment markdown, inline-comment bodies, describe block, 65,536-char cap |
@@ -57,6 +58,8 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 15. **One-click fixes only for single-line replacements.** A suggestion block replaces the anchored line; never emit one for a multi-line `fix`. The `fix` must survive anchoring + verifier before it's offered.
 16. **Accuracy levers are config toggles, and the default is the measured winner.** `accuracy.debias|calibration|lenses|cot` (v2.5) each map to an env knob in `evals/run.py` so the A/B is pure config. Never flip a default that changes review behavior without an eval that justifies it — same honest-numbers rule as fixtures. Run the matrix, ship what wins.
 17. **Preserve the cached prompt prefix.** Stable blocks (per-agent role, shared rules, calibration, debias, CoT instruction) are front-loaded in `analyst_system_prompt` and must stay byte-identical across calls; per-repo (language hint, guidance) and per-sample (ensemble lens) text goes *after* / into the user message. Reordering stable text behind variable text silently kills DeepSeek's prefix cache (~50× cost on those tokens).
+18. **Reasoning is a parameter, on by default, and essential (D36).** DeepSeek V4 flash runs thinking-on by default; disabling it tanks accuracy (~91%→61%, measured). Keep `analyst_thinking` default `None` (don't send the field — endpoint-safe; non-DeepSeek endpoints would 400 on an unknown `thinking` key). Temperature is inert while thinking is on, so the ensemble's only real diversity source then is the prompt lenses, not temperature.
+19. **SAST is opt-in and the rule corpus is the value (D35).** `sast.py` shells out to Semgrep; never reimplement its rules. Hits are kept only on added lines and go through anchoring + the verifier like any finding. Semgrep isn't in the slim default image — enabling `sast.enabled` needs it in the runner.
 
 ## Conventions
 

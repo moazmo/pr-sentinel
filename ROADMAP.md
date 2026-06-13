@@ -11,8 +11,14 @@ Scoped deliberately. v1 shipped a five-agent reviewer; **v2 shipped the accuracy
 - Adaptive sampling; opt-in cross-file pass; merge-readiness/effort score; confidence display
 - **v2.5 research levers** — confirmation-bias debiasing, per-agent calibration, diverse-lens ensemble, verdict-first CoT, rubric meta-judge verifier; benchmark expanded to 37 fixtures / 7 languages; all behind config toggles, defaults set from the measured A/B (DECISIONS D29–D34).
 
-## Next
+## Next — structural levers (post-v2.5; prompt-level gains are at the flash ceiling)
 
+Driven by `docs/NEXT_RESEARCH_2026-06-13.md`. The v2.5 A/B proved more prompting doesn't move cheap-model accuracy; these do.
+
+- **Reasoning controls (built, measuring).** `accuracy.analyst_thinking` + `reasoning_effort` — DeepSeek V4 thinking is a parameter (default on). Measuring thinking off (~10× cheaper output), two-tier thinking, and effort levels; set defaults from data (D36).
+- **SAST grounding (built, opt-in, live-path).** `sast.enabled` runs Semgrep and feeds hits to the verifier's triage — the documented 2025-26 precision lever (D35). Next: a **SAST-enabled image variant** (Semgrep is too heavy for the slim default), and measure FP-kill + miss-recovery on the real-PR benchmark.
+- **Agentic cross-file context.** Replace static `context_lines` with demand-driven fetch of definitions/callers/sibling routes + a validator (RepoAudit pattern) — the recall unlock for context-dependent findings. Gated on the context A/B.
+- **Real-PR benchmark.** Inverted real bug-fix commits + precision/recall scoring, so accuracy is measured the way Martian/CodeAnt do (did the dev act on the comment), not on seeded fixtures.
 - **Context A/B on the live path** — measure `review.context_lines` 0/4/8 on a real PR (the static-fixture harness can't extend hunks). SWE-PRBench says more context can *hurt*; re-default to the measured winner (D34).
 - **Benchmark to 60–100 fixtures** — extend the inverted-real-bug-fix and misleading-title sets; isolate per-lever arms (debias-only, calibration-only, lenses, cot) at `--runs 5` for tighter attribution.
 - **Flagship head-to-head leaderboard row** (GPT-5 / Claude Opus single pass vs the flash ensemble) once a flagship key is wired — the comparison the architecture is built to win.
@@ -30,4 +36,5 @@ Scoped deliberately. v1 shipped a five-agent reviewer; **v2 shipped the accuracy
 
 - **GitHub App** — one-click install, no workflow file.
 - **Hosted tier** — managed keys, team dashboard, org-wide policy. Engine stays open-source (open-core: paid is convenience, not capability).
+- **Distilled / RL-tuned review model (premium capability lever).** The one path past the cheap-model *capability* ceiling — a small model RL-tuned with structured-reasoning distillation on review/vuln data (R2Vul-style, [arXiv 2504.04699]). Out of the $0 BYOK hot path by definition → a hosted-tier model, not the OSS default.
 - **Learning across PRs** — repo-level memory of past reviews.

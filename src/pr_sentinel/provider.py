@@ -45,6 +45,8 @@ class LLMProvider(Protocol):
         temperature: float = 0.1,
         model: str | None = None,
         json_mode: bool = False,
+        thinking: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> CompletionResult: ...
 
 
@@ -101,6 +103,8 @@ class OpenAICompatProvider:
         temperature: float = 0.1,
         model: str | None = None,
         json_mode: bool = False,
+        thinking: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> CompletionResult:
         payload: dict = {
             "model": model or self._model,
@@ -111,6 +115,14 @@ class OpenAICompatProvider:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        # Reasoning control (DeepSeek V4: thinking is a request parameter, default
+        # on; temperature is a no-op while thinking is enabled). Only sent when
+        # explicitly set, so non-DeepSeek OpenAI-compatible endpoints that don't
+        # know the field are unaffected unless the user opts in.
+        if thinking is not None:
+            payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+            if thinking and reasoning_effort:
+                payload["reasoning_effort"] = reasoning_effort
         use_json = json_mode and self._json_mode_supported is not False
         if use_json:
             payload["response_format"] = {"type": "json_object"}
@@ -222,7 +234,12 @@ class AnthropicProvider:
         temperature: float = 0.1,
         model: str | None = None,
         json_mode: bool = False,
+        thinking: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> CompletionResult:
+        # `thinking`/`reasoning_effort` are accepted for Protocol parity and
+        # ignored — Anthropic exposes extended thinking through a different field
+        # we don't wire here (the prompt + parser tolerance carry reasoning).
         payload = {
             "model": model or self._model,
             "system": system,
