@@ -2,6 +2,12 @@
 
 All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags.
 
+## [Unreleased]
+
+### Added
+- **Repository-context prefetch** (`accuracy.repo_context`, default off): deterministically fetches definitions of the cross-file symbols a diff references (same-file siblings + imported modules) and hands analysts a bounded `<repo_context>` block — the thinking-compatible alternative to an agentic tool-loop (DeepSeek thinking mode can't function-call). Python-first, live-path, fail-open. Measured **36% → 45%** real-PR recall (directional; ships off until a larger benchmark confirms) (D37).
+- `evals/realpr.py --repo-context` to A/B the lever on real PRs.
+
 ## [2.6.0] — 2026-06-13 — structural levers (reasoning controls, SAST grounding, real-PR benchmark)
 
 After v2.5 proved prompt-level levers are at the cheap-model ceiling, this release adds the *structural* levers the research pointed to. All behavior-preserving (new knobs default off / provider-default).

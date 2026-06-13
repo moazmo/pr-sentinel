@@ -170,6 +170,7 @@ class ReviewState(TypedDict, total=False):
     pr: PRMetadata
     files: list[ChangedFile]
     pr_map: str
+    repo_context: str  # V2.6 L3: prefetched cross-file definitions (data, bounded)
     chunks: list[object]  # list[Chunk]
     findings: Annotated[list[Finding], operator.add]
     merged_findings: list[Finding]

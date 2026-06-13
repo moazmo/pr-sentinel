@@ -132,6 +132,7 @@ accuracy:
   # Measured: disabling thinking tanks accuracy (~91%→61%), so leave it on.
   analyst_thinking: null      # null = provider default (DeepSeek = on); false/true to force
   reasoning_effort: ""        # "" | low | medium | high (depth when thinking is on)
+  repo_context: false         # prefetch cross-file symbol definitions for context (Python, opt-in, live-path)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -255,7 +256,9 @@ The five research levers (debias, calibration, diverse lenses, verdict-first CoT
 
 #### The honest real-PR number (and where the work goes next)
 
-Seeded fixtures measure "does the right agent catch a planted bug with no false positives" — useful, but easy. The harder, truer test (`evals/realpr.py`, v2.6) takes **real merged bug-fix PRs**, reverses them to reintroduce the bug, and checks recall. On 11 such PRs (requests / flask / express / gin), `deepseek-v4-flash` caught **4/11 (36%)** — far below the seeded 91%, and roughly in the band where the best commercial tools sit on real PRs (Qodo ~57% recall, CodeRabbit/Greptile ~45% in the independent [Martian benchmark](https://www.codeant.ai/blogs/ai-code-review-benchmark-results-from-200-000-real-pull-requests)). The misses are the *context-dependent* defects — a removed workaround, a typing regression, a teardown ordering bug — that no ±N-line reviewer can judge from the diff alone. Closing that gap is the roadmap: **repository-aware (agentic) context** and **SAST grounding**, not more prompting. We publish the 36% because an honest hard number you can improve beats a flattering easy one you can't.
+Seeded fixtures measure "does the right agent catch a planted bug with no false positives" — useful, but easy. The harder, truer test (`evals/realpr.py`, v2.6) takes **real merged bug-fix PRs**, reverses them to reintroduce the bug, and checks recall. On 11 such PRs (requests / flask / express / gin), `deepseek-v4-flash` caught **4/11 (36%)** — far below the seeded 91%, and roughly in the band where the best commercial tools sit on real PRs (Qodo ~57% recall, CodeRabbit/Greptile ~45% in the independent [Martian benchmark](https://www.codeant.ai/blogs/ai-code-review-benchmark-results-from-200-000-real-pull-requests)). The misses are the *context-dependent* defects — a removed workaround, a typing regression, a teardown ordering bug — that no ±N-line reviewer can judge from the diff alone. Closing that gap is the roadmap: **repository-aware context** and **SAST grounding**, not more prompting. We publish the 36% because an honest hard number you can improve beats a flattering easy one you can't.
+
+The first step of that roadmap is already in: an opt-in **repository-context prefetch** (`accuracy.repo_context`) that hands analysts the definitions of the cross-file symbols a diff references. On the same set it lifts recall **36% → 45%** — the newly-caught bug being a *removed workaround*, exactly the context-dependent class. Directional (small sample, Python-first), so it ships off by default while we expand the benchmark — but it points the way.
 
 > Two reasoning facts worth knowing (verified against the DeepSeek API): `deepseek-v4-flash` reasons by default, and **turning that off collapses recall to ~64%** — so the system keeps reasoning on. Reasoning controls are exposed (`accuracy.analyst_thinking`, `reasoning_effort`) but default to the provider's setting.
 

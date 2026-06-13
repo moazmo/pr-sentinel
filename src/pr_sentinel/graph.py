@@ -159,7 +159,24 @@ def build_graph(
 
         chunks = build_chunks(files, config)
         pr_map = build_pr_map(state["pr"].title, files)
-        return {"files": files, "chunks": chunks, "pr_map": pr_map}
+
+        # V2.6 L3: prefetch cross-file definitions for the symbols the diff uses
+        # (same-file siblings + imported modules), so analysts can judge
+        # context-dependent issues. Python-first, opt-in, fail-open. A preset
+        # value (e.g. from the real-PR benchmark) is preserved when we don't fetch.
+        repo_context = state.get("repo_context", "")
+        if config.accuracy.repo_context and github is not None and not config.dry_run and head:
+            from .repo_context import gather_context
+
+            async def _fetch(path: str):
+                try:
+                    return await github.get_file_from_ref(path, head)
+                except Exception:  # noqa: BLE001 — context is best-effort
+                    return None
+
+            repo_context = await gather_context(files, _fetch)
+
+        return {"files": files, "chunks": chunks, "pr_map": pr_map, "repo_context": repo_context}
 
     def make_analyst_node(agent: AgentName):
         async def analyst(state: ReviewState) -> dict:
@@ -167,7 +184,8 @@ def build_graph(
             if agent not in config.agents.enabled or config.dry_run:
                 return {}
             findings, usage, error = await run_analyst(
-                agent, provider, state["pr_map"], state["chunks"], config
+                agent, provider, state["pr_map"], state["chunks"], config,
+                repo_context=state.get("repo_context", ""),
             )
             update: dict = {"findings": findings, "usage": usage}
             if error is not None:

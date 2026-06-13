@@ -111,6 +111,13 @@ class AccuracyConfig(BaseModel):
     # `reasoning_effort` ("" | low | medium | high) tunes depth when thinking is on.
     analyst_thinking: bool | None = None
     reasoning_effort: str = ""
+    # Repository-context prefetch (L3): deterministically fetch definitions of the
+    # symbols the diff references (same-file siblings + imported modules) and hand
+    # analysts a bounded, delimited context block — to judge the context-dependent
+    # bugs a ±N-line diff can't (the bulk of the real-PR recall gap). Python-first,
+    # opt-in, live-path (needs head-ref fetches). Off by default until a measured
+    # win on the real-PR benchmark (more context can also hurt — D34/SWE-PRBench).
+    repo_context: bool = False
 
 
 class AgentsConfig(BaseModel):

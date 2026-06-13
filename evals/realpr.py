@@ -17,6 +17,7 @@ on the clean fixtures + clean real PRs. Run manually (hits a real LLM):
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -171,16 +172,46 @@ async def main() -> int:
     config.review.context_lines = 0
     config.output.inline = False
 
+    # --repo-context measures lever L3: prefetch cross-file definitions (from the
+    # repo at the fix commit) and inject them, to see if recall lifts off the
+    # diff-only baseline. github=None in the graph, so we build context here and
+    # preset it into the state (ingest preserves a preset value).
+    want_ctx = "--repo-context" in sys.argv
+    gh_client = httpx.AsyncClient(timeout=30) if want_ctx else None
+
+    def _make_fetch(repo: str, ref: str):
+        async def fetch(path: str):
+            try:
+                r = await gh_client.get(
+                    f"https://api.github.com/repos/{repo}/contents/{path}",
+                    params={"ref": ref},
+                    headers={"Authorization": f"Bearer {token}"} if token else {},
+                )
+                if r.status_code != 200:
+                    return None
+                data = r.json()
+                if data.get("encoding") == "base64":
+                    return base64.b64decode(data["content"]).decode("utf-8", "replace")
+            except (httpx.HTTPError, ValueError, KeyError):
+                return None
+            return None
+        return fetch
+
     caught = 0
     total_in = total_out = 0
     for e in manifest:
         files = buggy_files(e)
         targets = _reverted_lines(files[0].patch or "")
+        repo_context = ""
+        if want_ctx:
+            from pr_sentinel.repo_context import gather_context
+            repo_context = await gather_context(files, _make_fetch(e["repo"], e["sha"]))
         graph = build_graph(provider, github=None)
         result = await graph.ainvoke({
             "config": config,
             "pr": PRMetadata(repo=e["repo"], number=e["pr"], title="Update " + e["file"]),
             "files": files,
+            "repo_context": repo_context,
         })
         findings = result.get("merged_findings", [])
         usage = result.get("usage")
@@ -195,8 +226,11 @@ async def main() -> int:
 
     cost, _ = estimate_cost_usd(model, total_in, total_out)
     n = len(manifest) or 1
-    print(f"\nRecall on real reintroduced bugs: {caught}/{len(manifest)} ({100*caught//n}%) · ≈${cost:.3f}")
+    tag = " +repo_context" if want_ctx else ""
+    print(f"\nRecall on real reintroduced bugs{tag}: {caught}/{len(manifest)} ({100*caught//n}%) · ≈${cost:.3f}")
     await provider.aclose()
+    if gh_client:
+        await gh_client.aclose()
     return 0
 
 

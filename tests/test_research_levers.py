@@ -212,6 +212,18 @@ class TestReasoningControls:
         assert p._client.payloads[0]["thinking"] == {"type": "enabled"}
         assert p._client.payloads[0]["reasoning_effort"] == "high"
 
+    async def test_run_analyst_appends_repo_context(self):
+        config = single_sample_config()
+        chunks, pr_map = _chunks_and_map(config)
+        provider = MockProvider()
+        await run_analyst(
+            AgentName.SECURITY, provider, pr_map, chunks, config,
+            repo_context="<repo_context>\ndef helper():\n    pass\n</repo_context>",
+        )
+        assert "<repo_context>" in provider.calls[0]["user"]
+        # Context sits after the diff so the diff stays the focus.
+        assert provider.calls[0]["user"].index("<diff>") < provider.calls[0]["user"].index("<repo_context>")
+
     async def test_run_analyst_passes_thinking_from_config(self):
         config = single_sample_config()
         config.accuracy.analyst_thinking = False

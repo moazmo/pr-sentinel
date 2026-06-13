@@ -220,6 +220,7 @@ async def run_analyst(
     pr_map: str,
     chunks: list,
     config: SentinelConfig,
+    repo_context: str = "",
 ) -> tuple[list[Finding], UsageStats, AgentError | None]:
     """Run one analyst over every chunk, K self-consistency samples per chunk
     (V2 A3). Per-call failures degrade to a partial result; only a fully-failed
@@ -246,6 +247,11 @@ async def run_analyst(
         nonlocal failures, calls_made
         calls_made += 1
         user = f"{pr_map}\n\n<diff>\n{chunk.text}\n</diff>"
+        if repo_context:
+            # Delimited cross-file definitions — data under review, never
+            # instructions (same rule as the diff). Helps judge context-dependent
+            # issues; placed after the diff so the diff stays the focus.
+            user += f"\n\nReference definitions from elsewhere in the repo (context only):\n{repo_context}"
         if use_lenses:
             lens = _lens_directive(sample_index)
             if lens:
