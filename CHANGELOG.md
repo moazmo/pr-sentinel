@@ -5,7 +5,7 @@ All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](ht
 ## [Unreleased]
 
 ### Added
-- **Repository-context prefetch** (`accuracy.repo_context`, default off): deterministically fetches definitions of the cross-file symbols a diff references (same-file siblings + imported modules) and hands analysts a bounded `<repo_context>` block — the thinking-compatible alternative to an agentic tool-loop (DeepSeek thinking mode can't function-call). Python-first, live-path, fail-open. Measured **36% → 45%** real-PR recall (directional; ships off until a larger benchmark confirms) (D37).
+- **Repository-context prefetch** (`accuracy.repo_context`, default off): deterministically fetches definitions of the cross-file symbols a diff references (same-file siblings + imported modules) and hands analysts a bounded `<repo_context>` block — the thinking-compatible alternative to an agentic tool-loop (DeepSeek thinking mode can't function-call). Python-first, live-path, fail-open. Measured **21% → 28%** real-PR recall on a 32-PR set (+7pp, no regressions; replicates +9pp on an 11-PR pilot) — promising but single-run, so ships off until a 3-run confirmation (D37).
 - `evals/realpr.py --repo-context` to A/B the lever on real PRs.
 
 ## [2.6.0] — 2026-06-13 — structural levers (reasoning controls, SAST grounding, real-PR benchmark)
@@ -15,7 +15,7 @@ After v2.5 proved prompt-level levers are at the cheap-model ceiling, this relea
 ### Added
 - **Reasoning controls** (`accuracy.analyst_thinking`, `accuracy.reasoning_effort`): DeepSeek V4 thinking is a request parameter (default on). Tri-state `analyst_thinking` is endpoint-safe (the `thinking` field is sent only when explicitly set, so non-DeepSeek endpoints are unaffected). Measured finding: **thinking is essential** — disabling it on analysts drops ~91% → ~61%, so it stays on (D36).
 - **SAST grounding** (`sast.enabled`, default off): runs Semgrep over the changed files and feeds its hits into the verifier's triage — the documented 2025-26 precision lever. Opt-in, fail-open, live-path (needs Semgrep in the runner) (D35).
-- **Real-PR benchmark** (`evals/realpr.py`): discovers real merged bug-fix PRs from the GitHub API, reverses them to reintroduce the bug, and scores recall on real bugs — the honest metric the seeded fixtures can't give. First measured result: **4/11 (36%)** recall on real reintroduced bugs (vs 91% on seeded fixtures) — the context-dependent gap the agentic-context roadmap targets.
+- **Real-PR benchmark** (`evals/realpr.py`): discovers real merged bug-fix PRs from the GitHub API, reverses them to reintroduce the bug, and scores recall on real bugs — the honest metric the seeded fixtures can't give. First measured result: **7/32 (21%)** recall on real reintroduced bugs (vs 91% on seeded fixtures) — the context-dependent gap the agentic-context roadmap targets.
 
 ### Notes
 - Premium-tier distilled/RL-tuned review model specced in ROADMAP (the path past the cheap-model capability ceiling).

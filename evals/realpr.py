@@ -33,8 +33,14 @@ from pr_sentinel.graph import build_graph  # noqa: E402
 from pr_sentinel.models import ChangedFile, PRMetadata  # noqa: E402
 from pr_sentinel.provider import OpenAICompatProvider, estimate_cost_usd  # noqa: E402
 
-# Active, well-known repos with small, reviewable bug-fix PRs across languages.
-DEFAULT_REPOS = ["psf/requests", "pallets/flask", "expressjs/express", "gin-gonic/gin"]
+# Active, well-known repos with small, reviewable bug-fix PRs. Python-weighted on
+# purpose: repo_context (L3) is Python-first, so the lever needs Python surface to
+# act on; the JS/Go repos add language breadth for the diff-only recall number.
+DEFAULT_REPOS = [
+    "psf/requests", "pallets/flask", "encode/httpx", "pallets/click",
+    "pydantic/pydantic", "tiangolo/fastapi", "psf/black",
+    "expressjs/express", "gin-gonic/gin",
+]
 SOURCE_EXT = {".py", ".js", ".ts", ".go", ".java", ".rb", ".rs", ".c", ".cpp", ".cs"}
 CACHE = Path(__file__).parent / "_realpr_cache.json"
 _HUNK = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)")
@@ -227,7 +233,15 @@ async def main() -> int:
     cost, _ = estimate_cost_usd(model, total_in, total_out)
     n = len(manifest) or 1
     tag = " +repo_context" if want_ctx else ""
-    print(f"\nRecall on real reintroduced bugs{tag}: {caught}/{len(manifest)} ({100*caught//n}%) · ≈${cost:.3f}")
+    line = f"Recall on real reintroduced bugs{tag}: {caught}/{len(manifest)} ({100*caught//n}%) · ≈${cost:.3f}"
+    print(f"\n{line}")
+    # Durable append (survives a dead shell / sleep, like the matrix log).
+    try:
+        with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
+            from datetime import date
+            fh.write(f"{date.today().isoformat()} [realpr{tag}] {line}\n")
+    except OSError:
+        pass
     await provider.aclose()
     if gh_client:
         await gh_client.aclose()
