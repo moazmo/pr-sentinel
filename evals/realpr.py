@@ -203,43 +203,63 @@ async def main() -> int:
             return None
         return fetch
 
-    caught = 0
+    runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 1
+    tag = " +repo_context" if want_ctx else ""
+
+    # Context is deterministic per (repo, sha) — fetch once, reuse across runs.
+    ctx_cache: dict[int, str] = {}
+    if want_ctx:
+        from pr_sentinel.repo_context import gather_context
+        for e in manifest:
+            ctx_cache[e["pr"]] = await gather_context(buggy_files(e), _make_fetch(e["repo"], e["sha"]))
+
+    from datetime import date
+    total_caught = 0
     total_in = total_out = 0
-    for e in manifest:
-        files = buggy_files(e)
-        targets = _reverted_lines(files[0].patch or "")
-        repo_context = ""
-        if want_ctx:
-            from pr_sentinel.repo_context import gather_context
-            repo_context = await gather_context(files, _make_fetch(e["repo"], e["sha"]))
-        graph = build_graph(provider, github=None)
-        result = await graph.ainvoke({
-            "config": config,
-            "pr": PRMetadata(repo=e["repo"], number=e["pr"], title="Update " + e["file"]),
-            "files": files,
-            "repo_context": repo_context,
-        })
-        findings = result.get("merged_findings", [])
-        usage = result.get("usage")
-        if usage:
-            total_in += usage.total_prompt
-            total_out += usage.total_completion
-        hit = any(f.file == e["file"] and (f.line_start in targets or f.line_end in targets
-                  or any(t in range(f.line_start, f.line_end + 1) for t in targets))
-                  for f in findings)
-        caught += hit
-        print(f"[{'CAUGHT' if hit else 'missed'}] {e['repo']}#{e['pr']} {e['file']} — {e['title'][:60]}")
+    per_pr_hits: dict[int, int] = {e["pr"]: 0 for e in manifest}
+    for run_i in range(1, runs + 1):
+        run_caught = 0
+        for e in manifest:
+            files = buggy_files(e)
+            targets = _reverted_lines(files[0].patch or "")
+            graph = build_graph(provider, github=None)
+            result = await graph.ainvoke({
+                "config": config,
+                "pr": PRMetadata(repo=e["repo"], number=e["pr"], title="Update " + e["file"]),
+                "files": files,
+                "repo_context": ctx_cache.get(e["pr"], ""),
+            })
+            findings = result.get("merged_findings", [])
+            usage = result.get("usage")
+            if usage:
+                total_in += usage.total_prompt
+                total_out += usage.total_completion
+            hit = any(f.file == e["file"] and (f.line_start in targets or f.line_end in targets
+                      or any(t in range(f.line_start, f.line_end + 1) for t in targets))
+                      for f in findings)
+            run_caught += hit
+            per_pr_hits[e["pr"]] += hit
+            if runs == 1:
+                print(f"[{'CAUGHT' if hit else 'missed'}] {e['repo']}#{e['pr']} {e['file']} — {e['title'][:60]}")
+        total_caught += run_caught
+        try:
+            with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
+                fh.write(f"{date.today().isoformat()} [realpr{tag} run{run_i}/{runs}] {run_caught}/{len(manifest)}\n")
+        except OSError:
+            pass
+        print(f"run {run_i}/{runs}: {run_caught}/{len(manifest)}")
 
     cost, _ = estimate_cost_usd(model, total_in, total_out)
-    n = len(manifest) or 1
-    tag = " +repo_context" if want_ctx else ""
-    line = f"Recall on real reintroduced bugs{tag}: {caught}/{len(manifest)} ({100*caught//n}%) · ≈${cost:.3f}"
+    cells = (len(manifest) or 1) * runs
+    line = f"Recall on real reintroduced bugs{tag}: {total_caught}/{cells} ({100*total_caught//cells}%) over {runs} run(s) · ≈${cost:.3f}"
     print(f"\n{line}")
-    # Durable append (survives a dead shell / sleep, like the matrix log).
+    # Per-PR consistency (how many of the N runs caught each) — separates signal from noise.
+    consistent = sum(1 for v in per_pr_hits.values() if v == runs)
+    flaky = sum(1 for v in per_pr_hits.values() if 0 < v < runs)
+    print(f"per-PR: {consistent} caught every run, {flaky} flaky (caught some runs)")
     try:
         with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
-            from datetime import date
-            fh.write(f"{date.today().isoformat()} [realpr{tag}] {line}\n")
+            fh.write(f"{date.today().isoformat()} [realpr{tag}] {line} | consistent={consistent} flaky={flaky}\n")
     except OSError:
         pass
     await provider.aclose()
