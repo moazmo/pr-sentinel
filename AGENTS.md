@@ -6,7 +6,7 @@ PR Sentinel is a multi-agent code-review GitHub Action: five LLM agents (Archite
 
 ```bash
 pip install -e ".[dev]"        # setup (use a venv)
-pytest                         # 239 tests — LLM and GitHub API fully mocked, no network, no key
+pytest                         # 241 tests — LLM and GitHub API fully mocked, no network, no key
 ruff check src tests evals     # lint (line length 100)
 python evals/run.py --runs 3 --label flash-v2   # evals — REAL LLM; needs PR_SENTINEL_API_KEY
                                # env knobs: PR_SENTINEL_{BASE_URL,MODEL,SAMPLES,VERIFIER,
@@ -36,7 +36,7 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | `src/pr_sentinel/security.py` | Prompt sanitizer + output secret scrubbing |
 | `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch); accuracy/output blocks |
 | `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0; `@pr-sentinel` command dispatch (author-association gated) |
-| `tests/` | 239 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config; `test_research_levers.py` pins the v2.5 lever wiring. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
+| `tests/` | 241 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config; `test_research_levers.py` pins the v2.5 lever wiring. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
 | `evals/` | 37 fixtures (7 languages, hard negatives, 2 injection vectors, misleading-title `mt_*` debias probes); `run.py` env-driven leaderboard runner (per-lever knobs, fail-fast timeouts, durable `_matrix.log`) |
 
 ## Invariants — never break these

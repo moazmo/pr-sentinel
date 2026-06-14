@@ -18,7 +18,7 @@ Driven by `docs/NEXT_RESEARCH_2026-06-13.md`. The v2.5 A/B proved more prompting
 - **Reasoning controls (built, measuring).** `accuracy.analyst_thinking` + `reasoning_effort` — DeepSeek V4 thinking is a parameter (default on). Measuring thinking off (~10× cheaper output), two-tier thinking, and effort levels; set defaults from data (D36).
 - **SAST grounding (built, opt-in, live-path).** `sast.enabled` runs Semgrep and feeds hits to the verifier's triage — the documented 2025-26 precision lever (D35). Next: a **SAST-enabled image variant** (Semgrep is too heavy for the slim default), and measure FP-kill + miss-recovery on the real-PR benchmark.
 - **Agentic cross-file context.** Replace static `context_lines` with demand-driven fetch of definitions/callers/sibling routes + a validator (RepoAudit pattern) — the recall unlock for context-dependent findings. Gated on the context A/B.
-- **Real-PR benchmark.** Inverted real bug-fix commits + precision/recall scoring, so accuracy is measured the way Martian/CodeAnt do (did the dev act on the comment), not on seeded fixtures.
+- **Real-PR benchmark.** Inverted real bug-fix commits, scored on real bugs. `evals/realpr.py --precision` now adds a forward-fixed-version false-positive proxy → **precision + F1**, not recall-only (closes the gap both external review passes flagged). Next: promote it to a **release gate** — run on a fixed monthly snapshot, fail a release if recall regresses.
 - **Context A/B on the live path** — measure `review.context_lines` 0/4/8 on a real PR (the static-fixture harness can't extend hunks). SWE-PRBench says more context can *hurt*; re-default to the measured winner (D34).
 - **Benchmark to 60–100 fixtures** — extend the inverted-real-bug-fix and misleading-title sets; isolate per-lever arms (debias-only, calibration-only, lenses, cot) at `--runs 5` for tighter attribution.
 - **Flagship head-to-head leaderboard row** (GPT-5 / Claude Opus single pass vs the flash ensemble) once a flagship key is wired — the comparison the architecture is built to win.
@@ -31,6 +31,7 @@ Driven by `docs/NEXT_RESEARCH_2026-06-13.md`. The v2.5 A/B proved more prompting
 - **Multi git-provider support** — GitLab, Bitbucket, Azure DevOps.
 - **Image signing / SLSA provenance** for the release pipeline (base image is already digest-pinned; Dependabot watches it).
 - **Fork-PR review** via a documented maintainer-gated label workflow (never `pull_request_target`).
+- **Feedback flywheel** — record which findings developers dismiss vs. commit, and re-rank noisy vs. high-fix-rate categories per repo (the BitsAI-CR / iCodeReviewer production pattern). Needs adoption data first.
 
 ## Much later (only after traction evidence)
 

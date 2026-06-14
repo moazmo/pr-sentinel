@@ -24,6 +24,8 @@ import asyncio
 import keyword
 import re
 
+from .security import sanitize_for_prompt
+
 # Identifiers that are never worth resolving (keywords + ubiquitous builtins).
 _STOP = set(keyword.kwlist) | {
     "self", "cls", "True", "False", "None", "print", "len", "range", "str", "int",
@@ -149,7 +151,12 @@ def build_python_context(
         budget -= len(block)
     if not parts:
         return ""
-    return "<repo_context>\n" + "\n\n".join(parts) + "\n</repo_context>"
+    # The snippets are fetched from the PR head ref (PR-controlled). Sanitize them
+    # like the diff so a hostile imported module can't close the block early and
+    # smuggle instructions out of the data context (invariant 3). Our own wrapper
+    # tags are added AFTER sanitizing, so they survive.
+    inner = sanitize_for_prompt("\n\n".join(parts))
+    return "<repo_context>\n" + inner + "\n</repo_context>"
 
 
 async def gather_context(files, fetch, max_files: int = 8, total_chars: int = 6000) -> str:

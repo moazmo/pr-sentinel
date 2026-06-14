@@ -5,7 +5,7 @@
 [![CI](https://github.com/moazmo/pr-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/moazmo/pr-sentinel/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
-[![evals 49/51](https://img.shields.io/badge/evals-49%2F51%20%C2%B7%200%20false%20positives-brightgreen.svg)](#accuracy-is-a-systems-problem-not-a-model-size-problem)
+[![evals 91% seeded](https://img.shields.io/badge/evals-91%25%20seeded%20%C2%B7%200%20FP-brightgreen.svg)](#accuracy-is-a-systems-problem-not-a-model-size-problem)
 [![cost ~$0.005/review](https://img.shields.io/badge/cost-~%240.005%2Freview-blue.svg)](#what-it-costs)
 
 ![PR Sentinel reviewing a pull request](assets/demo.gif)
@@ -102,7 +102,7 @@ Large PRs: files are fetched via the paginated files API (the only endpoint that
 Optional `.pr-sentinel.yml` at the repo root — zero config works out of the box. All fields and their defaults:
 
 ```yaml
-mode: ""                      # preset: fast | balanced | thorough (overrides the accuracy block)
+mode: ""                      # preset: fast | balanced | thorough (thorough = all research levers on, max-recall; measured ≈ baseline on flash — overrides the accuracy block)
 provider:
   base_url: https://api.openai.com/v1     # any OpenAI-compatible endpoint
   model: gpt-5-mini
@@ -269,7 +269,7 @@ PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
 PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**239 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**241 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
 
 ## On-demand commands
 

@@ -147,6 +147,17 @@ def buggy_files(entry: dict) -> list[ChangedFile]:
     return [f]
 
 
+def fixed_files(entry: dict) -> list[ChangedFile]:
+    """The PR's merged FIX as-is (forward patch). Its `+` lines are the accepted
+    correct code, so a finding landing on them is a false positive — the precision
+    proxy both Kimi review passes asked for (recall alone can be gamed by a reviewer
+    that flags everything). Pure."""
+    patch = entry["patch"]
+    f = ChangedFile(path=entry["file"], status="modified", patch=patch)
+    f.additions = (patch or "").count("\n+")
+    return [f]
+
+
 def _reverted_lines(reversed_patch: str) -> set[int]:
     """New-file line numbers of the reintroduced (buggy) added lines."""
     from pr_sentinel.diffmap import added_line_numbers
@@ -249,6 +260,33 @@ async def main() -> int:
             pass
         print(f"run {run_i}/{runs}: {run_caught}/{len(manifest)}")
 
+    # Precision proxy (--precision): run each PR's FIXED (forward) version and count
+    # findings landing on the fix's added lines — those are false positives (the
+    # accepted-correct code). Recall alone can be gamed by a reviewer that flags
+    # everything; this is the F1 axis both review passes flagged as missing. One
+    # extra pass over the manifest (≈ doubles cost), so it is opt-in.
+    fp_prs = -1
+    if "--precision" in sys.argv:
+        fp_prs = 0
+        for e in manifest:
+            files = fixed_files(e)
+            targets = _reverted_lines(files[0].patch or "")  # = added lines of the fix
+            graph = build_graph(provider, github=None)
+            result = await graph.ainvoke({
+                "config": config,
+                "pr": PRMetadata(repo=e["repo"], number=e["pr"], title="Update " + e["file"]),
+                "files": files,
+                "repo_context": "",
+            })
+            usage = result.get("usage")
+            if usage:
+                total_in += usage.total_prompt
+                total_out += usage.total_completion
+            if any(f.file == e["file"] and (f.line_start in targets or f.line_end in targets
+                   or any(t in range(f.line_start, f.line_end + 1) for t in targets))
+                   for f in result.get("merged_findings", [])):
+                fp_prs += 1
+
     cost, _ = estimate_cost_usd(model, total_in, total_out)
     cells = (len(manifest) or 1) * runs
     line = f"Recall on real reintroduced bugs{tag}: {total_caught}/{cells} ({100*total_caught//cells}%) over {runs} run(s) · ≈${cost:.3f}"
@@ -262,6 +300,22 @@ async def main() -> int:
             fh.write(f"{date.today().isoformat()} [realpr{tag}] {line} | consistent={consistent} flaky={flaky}\n")
     except OSError:
         pass
+    if fp_prs >= 0:
+        tp_prs = sum(1 for v in per_pr_hits.values() if v > 0)
+        n = len(manifest) or 1
+        recall_prs = tp_prs / n
+        denom = tp_prs + fp_prs
+        precision = tp_prs / denom if denom else 0.0
+        f1 = (2 * precision * recall_prs / (precision + recall_prs)) if (precision + recall_prs) else 0.0
+        pline = (f"Precision proxy{tag}: TP={tp_prs} FP={fp_prs} "
+                 f"precision={100*precision:.0f}% recall={100*recall_prs:.0f}% F1={100*f1:.0f}% "
+                 f"· clean-pass {n - fp_prs}/{n}")
+        print(pline)
+        try:
+            with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
+                fh.write(f"{date.today().isoformat()} [realpr precision{tag}] {pline}\n")
+        except OSError:
+            pass
     await provider.aclose()
     if gh_client:
         await gh_client.aclose()

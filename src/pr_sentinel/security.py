@@ -59,7 +59,9 @@ def scrub_secrets(text: str, known_secrets: list[str] | None = None) -> str:
     return scrubbed
 
 
-_TAG_BREAKER = re.compile(r"</?\s*(diff|pr_title|pr_description|file)\b[^>]*>", re.IGNORECASE)
+_TAG_BREAKER = re.compile(
+    r"</?\s*(diff|pr_title|pr_description|file|repo_context)\b[^>]*>", re.IGNORECASE
+)
 
 
 def sanitize_for_prompt(text: str) -> str:
