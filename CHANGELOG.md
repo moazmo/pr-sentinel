@@ -6,6 +6,7 @@ All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](ht
 
 ### Added
 - **Repository-context prefetch** (`accuracy.repo_context`, default off): deterministically fetches definitions of the cross-file symbols a diff references (same-file siblings + imported modules) and hands analysts a bounded `<repo_context>` block — the thinking-compatible alternative to an agentic tool-loop (DeepSeek thinking mode can't function-call). Python-first, live-path, fail-open. Measured over 3 runs on a 32-PR set: **24% → 27%** real-PR recall; per-PR it reliably adds 1 Python context-dependent catch (rest is non-Python run-to-run noise). A small, real, Python-only gain that costs extra fetches → ships off, recommended opt-in for Python repos (D37).
+- **Multi-language repo-context:** `repo_context` now resolves **JS/TS** (same-file siblings + relative `./`/`../` imports) and **Go** (same-file/same-package siblings), not just Python — dependency-free regex extraction. Default still off, pending a measured multi-language win on the real-PR benchmark (Go cross-package needs a directory listing the fetch path doesn't provide → deferred to the agentic upgrade).
 - `evals/realpr.py --repo-context` to A/B the lever on real PRs.
 - `evals/realpr.py --precision`: a forward-fixed-version false-positive proxy → reports **precision + F1**, not recall-only (the F1 axis two external review passes flagged as missing).
 

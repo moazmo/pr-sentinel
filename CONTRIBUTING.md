@@ -14,7 +14,7 @@ pip install -e ".[dev]"
 ## Running tests
 
 ```bash
-pytest          # 241 tests, LLM and GitHub API fully mocked — no network, no key needed
+pytest          # 243 tests, LLM and GitHub API fully mocked — no network, no key needed
 ruff check src tests
 ```
 

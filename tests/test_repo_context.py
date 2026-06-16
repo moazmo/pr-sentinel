@@ -101,13 +101,56 @@ async def test_gather_context_resolves_same_file_and_imported():
     assert "app.calc.tax" in ctx          # imported symbol resolved app.calc -> app/calc.py
 
 
-async def test_gather_context_empty_for_non_python():
+async def test_gather_context_empty_for_unsupported_ext():
     from pr_sentinel.repo_context import gather_context
 
     async def fetch(path):
         return "irrelevant"
 
-    assert await gather_context([_F("main.go", "@@ +1 @@\n+x := 1\n")], fetch) == ""
+    # Ruby isn't in _LANG -> file is skipped -> no context.
+    assert await gather_context([_F("main.rb", "@@ +1 @@\n+puts foo(bar)\n")], fetch) == ""
+
+
+async def test_gather_context_go_same_file():
+    from pr_sentinel.repo_context import gather_context
+
+    files = [_F("app/calc.go", "@@ -1 +1,3 @@\n+func Handler() int {\n+    return Helper()\n+}\n")]
+    src = {
+        "app/calc.go": (
+            "package app\n"
+            "func Helper() int {\n    return 42\n}\n"
+            "func Handler() int {\n    return Helper()\n}\n"
+        ),
+    }
+
+    async def fetch(path):
+        return src.get(path)
+
+    ctx = await gather_context(files, fetch)
+    assert "<repo_context>" in ctx
+    assert "func Helper() int" in ctx          # same-package sibling the diff calls
+
+
+async def test_gather_context_js_same_file_and_relative_import():
+    from pr_sentinel.repo_context import gather_context
+
+    files = [_F("app/api.js", "@@ -1 +1,3 @@\n+function handler(req) {\n+  return tax(base(req));\n+}\n")]
+    src = {
+        "app/api.js": (
+            "import { tax } from './calc';\n"
+            "function base(r) {\n  return r.x;\n}\n"
+            "function handler(req) {\n  return tax(base(req));\n}\n"
+        ),
+        "app/calc.js": "export function tax(a) {\n  return a * 0.2;\n}\n",
+    }
+
+    async def fetch(path):
+        return src.get(path)
+
+    ctx = await gather_context(files, fetch)
+    assert "<repo_context>" in ctx
+    assert "function base(r)" in ctx                 # same-file sibling
+    assert "./calc.tax" in ctx and "a * 0.2" in ctx  # relative import resolved ./calc -> app/calc.js
 
 
 def test_build_context_sanitizes_repo_context_breakout():

@@ -132,7 +132,7 @@ accuracy:
   # Measured: disabling thinking tanks accuracy (~91%→61%), so leave it on.
   analyst_thinking: null      # null = provider default (DeepSeek = on); false/true to force
   reasoning_effort: ""        # "" | low | medium | high (depth when thinking is on)
-  repo_context: false         # prefetch cross-file symbol definitions for context (Python, opt-in, live-path)
+  repo_context: false         # prefetch cross-file symbol definitions for context (Python/JS/TS/Go, opt-in, live-path)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -258,7 +258,7 @@ The five research levers (debias, calibration, diverse lenses, verdict-first CoT
 
 Seeded fixtures measure "does the right agent catch a planted bug with no false positives" — useful, but easy. The harder, truer test (`evals/realpr.py`, v2.6) takes **real merged bug-fix PRs**, reverses them to reintroduce the bug, and checks recall. On **32 such PRs** across 9 repos (requests / flask / httpx / click / pydantic / fastapi / black / express / gin), `deepseek-v4-flash` caught **~24% (23/96 over 3 runs)** diff-only — far below the seeded 91%, and a sobering, honest read on real-world recall (the best commercial tools sit ~45–57% on real PRs per the independent [Martian benchmark](https://www.codeant.ai/blogs/ai-code-review-benchmark-results-from-200-000-real-pull-requests)). The misses are the *context-dependent* defects — a removed workaround, a typing regression, a teardown ordering bug — that no ±N-line reviewer can judge from the diff alone. Closing that gap is the roadmap: **repository-aware context** and **SAST grounding**, not more prompting. We publish the 24% because an honest hard number you can improve beats a flattering easy one you can't.
 
-The first step of that roadmap is already in: an opt-in **repository-context prefetch** (`accuracy.repo_context`) that hands analysts the definitions of the cross-file symbols a diff references. Over 3 runs on the same 32 PRs it moved recall **24% → 27%** — and the per-PR analysis is honest about why: it reliably adds one Python context-dependent catch (a type bug resolved by the imported definitions), with the rest of the delta being run-to-run noise on non-Python files (which get no context). A small, real, Python-only gain that also costs extra fetches per review — so it ships **off by default**, a recommended opt-in for Python-heavy repos. The path to on is language coverage + a clearer margin, not this.
+The first step of that roadmap is already in: an opt-in **repository-context prefetch** (`accuracy.repo_context`) that hands analysts the definitions of the cross-file symbols a diff references. Over 3 runs on the same 32 PRs it moved recall **24% → 27%** — and the per-PR analysis is honest about why: it reliably adds one Python context-dependent catch (a type bug resolved by the imported definitions), with the rest of the delta being run-to-run noise on non-Python files (which get no context). A small, real, Python-only gain that also costs extra fetches per review — so it ships **off by default**, a recommended opt-in for Python-heavy repos. JS/TS (same-file + relative imports) and Go (same-file siblings) coverage is now in; flipping it default-on still waits on a measured multi-language win, not just the coverage.
 
 > Two reasoning facts worth knowing (verified against the DeepSeek API): `deepseek-v4-flash` reasons by default, and **turning that off collapses recall to ~64%** — so the system keeps reasoning on. Reasoning controls are exposed (`accuracy.analyst_thinking`, `reasoning_effort`) but default to the provider's setting.
 
@@ -269,7 +269,7 @@ PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
 PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**241 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**243 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
 
 ## On-demand commands
 
