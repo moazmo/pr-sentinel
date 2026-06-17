@@ -37,9 +37,14 @@ from pr_sentinel.provider import OpenAICompatProvider, estimate_cost_usd  # noqa
 # purpose: repo_context (L3) is Python-first, so the lever needs Python surface to
 # act on; the JS/Go repos add language breadth for the diff-only recall number.
 DEFAULT_REPOS = [
+    # Python
     "psf/requests", "pallets/flask", "encode/httpx", "pallets/click",
-    "pydantic/pydantic", "tiangolo/fastapi", "psf/black",
-    "expressjs/express", "gin-gonic/gin",
+    "pydantic/pydantic", "tiangolo/fastapi", "psf/black", "django/django",
+    "scrapy/scrapy", "sqlalchemy/sqlalchemy", "psf/requests-html", "encode/starlette",
+    # JS/TS
+    "expressjs/express", "axios/axios", "lodash/lodash", "vuejs/core",
+    # Go
+    "gin-gonic/gin", "spf13/cobra", "spf13/viper", "labstack/echo",
 ]
 SOURCE_EXT = {".py", ".js", ".ts", ".go", ".java", ".rb", ".rs", ".c", ".cpp", ".cs"}
 CACHE = Path(__file__).parent / "_realpr_cache.json"
@@ -188,6 +193,18 @@ async def main() -> int:
     config.provider.base_url = base_url
     config.review.context_lines = 0
     config.output.inline = False
+    # Lever 4: reasoning controls as pure env, mirroring evals/run.py — so the
+    # reasoning_effort A/B on real PRs needs no code change.
+    config.accuracy.reasoning_effort = os.environ.get(
+        "PR_SENTINEL_REASONING_EFFORT", config.accuracy.reasoning_effort)
+    _think = os.environ.get("PR_SENTINEL_ANALYST_THINKING", "").lower()
+    if _think in ("on", "true", "1"):
+        config.accuracy.analyst_thinking = True
+    elif _think in ("off", "false", "0"):
+        config.accuracy.analyst_thinking = False
+    if config.accuracy.reasoning_effort or config.accuracy.analyst_thinking is not None:
+        print(f"reasoning: effort={config.accuracy.reasoning_effort or '-'} "
+              f"thinking={config.accuracy.analyst_thinking}")
 
     # --repo-context measures lever L3: prefetch cross-file definitions (from the
     # repo at the fix commit) and inject them, to see if recall lifts off the
@@ -216,6 +233,8 @@ async def main() -> int:
 
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 1
     tag = " +repo_context" if want_ctx else ""
+    if config.accuracy.reasoning_effort:
+        tag += f" +effort={config.accuracy.reasoning_effort}"
 
     # Context is deterministic per (repo, sha) — fetch once, reuse across runs.
     ctx_cache: dict[int, str] = {}
