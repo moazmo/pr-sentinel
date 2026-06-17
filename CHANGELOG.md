@@ -10,8 +10,10 @@ All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](ht
 - `evals/realpr.py --repo-context` to A/B the lever on real PRs.
 - `evals/realpr.py --precision`: a forward-fixed-version false-positive proxy → reports **precision + F1**, not recall-only (the F1 axis two external review passes flagged as missing).
 - `evals/sast_probe.py`: measures the SAST lever (Semgrep via the official Docker image) on both the real-PR set and the seeded fixtures — Phase 1 ($0 raw recall + FP), Phase 2 (preset hits → anchor → verifier).
+- `evals/agentic_probe2.py`: the *proper* agentic loop (def-only `fetch_definition`, RepoAudit hypothesize→confirm→validate, `reasoning_effort=high`) with a directly-comparable diff-only control.
 
 ### Measured / decided
+- **Proper agentic loop measured (D40):** the best-shot redesign (def-only fetches + RepoAudit structure + effort=high) scored **3/10** vs diff-only **5/10** on the same 10 hard real PRs — recovered from D38's naive 1/10 but still **lost to diff-only**. Closes D38's "naive impl" caveat: agentic context hurts cheap-model recall regardless of loop quality → **not integrated**; the recall unlock is a stronger-model technique.
 - **SAST grounding measured (D39):** raw Semgrep = 0/32 on the real-PR set (logic bugs, wrong instrument), 12 catches / 3 clean-FPs on the seeded security fixtures; through the pipeline the verifier **killed 3/3 of the FPs (0 leaked)** — the design is **precision-safe** — but added **0 net recall** (the analysts already catch those). → `sast.enabled` stays **opt-in/off** and **no SAST image variant is shipped** (no measured win to justify the dependency). Same disciplined outcome as repo_context (D37) and the agentic loop (D38).
 
 ### Changed
