@@ -61,6 +61,16 @@ SYSTEM = (
     "Report only real bugs introduced by this diff. If none, reply {\"findings\":[]}."
 )
 
+# Control: same model, same scoring, but diff-only (no fetch tool) — isolates the
+# contribution of the agentic context-fetching vs a bare single pass.
+CONTROL_SYSTEM = (
+    "You are a senior code reviewer. Review ONLY the diff for real bugs introduced "
+    "by this change — you have no other context. Reply with ONLY a JSON object: "
+    '{"findings":[{"file":"<path from the diff>","line_start":<int>,"line_end":<int>,'
+    '"severity":"critical|high|medium|low","category":"<short>","message":"<what is wrong>"}]}. '
+    "If none, reply {\"findings\":[]}."
+)
+
 TOOLS = [{
     "type": "function",
     "function": {
@@ -128,9 +138,20 @@ def _chat(client: httpx.Client, key: str, model: str, messages: list,
     return None
 
 
-def review_pr(client: httpx.Client, key: str, model: str, entry: dict, token: str) -> tuple[list[dict], int]:
-    """Run the agentic loop on one (reversed-buggy) PR. Returns (findings, n_fetches)."""
+def review_pr(client: httpx.Client, key: str, model: str, entry: dict, token: str,
+              agentic: bool = True) -> tuple[list[dict], int]:
+    """Run the review on one (reversed-buggy) PR. agentic=True = tool-loop;
+    agentic=False = a single diff-only pass (the control). Returns (findings, n_fetches)."""
     rev = realpr.reverse_patch(entry["patch"])
+    if not agentic:
+        user_c = (f"Repository: {entry['repo']}\nFile under review: {entry['file']}\n\n"
+                  f"<diff>\n{rev}\n</diff>\n\nReview this change.")
+        msg = _chat(client, key, model,
+                    [{"role": "system", "content": CONTROL_SYSTEM},
+                     {"role": "user", "content": user_c}], use_tools=False)
+        if msg is None:
+            return [], 0
+        return (_extract_finding_dicts(msg.get("content") or "") or []), 0
     user = (
         f"Repository: {entry['repo']}\nFile under review: {entry['file']}\n\n"
         f"<diff>\n{rev}\n</diff>\n\nReview this change. Fetch any context you need first."
@@ -183,7 +204,9 @@ def main() -> int:
     token = os.environ.get("GITHUB_TOKEN", "")
     model = sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv \
         else "deepseek-v4-flash"
-    print(f"endpoint: {OR_URL}")
+    agentic = "--no-tools" not in sys.argv
+    mode = "agentic" if agentic else "control(diff-only)"
+    print(f"endpoint: {OR_URL} · mode: {mode}")
     limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 5
 
     cache = realpr.CACHE
@@ -200,7 +223,7 @@ def main() -> int:
         for e in manifest:
             print(f"reviewing {e['repo']}#{e['pr']} {e['file']}", flush=True)
             targets = realpr._reverted_lines(realpr.reverse_patch(e["patch"]))
-            findings, nf = review_pr(client, key, model, e, token)
+            findings, nf = review_pr(client, key, model, e, token, agentic=agentic)
             total_fetches += nf
             hit = any(
                 isinstance(f, dict) and f.get("file") == e["file"]
@@ -214,18 +237,18 @@ def main() -> int:
                   f"({nf} fetches, {len(findings)} findings) — {e['title'][:50]}")
             try:
                 with open(Path(__file__).parent / "_agentic.log", "a", encoding="utf-8") as fh:
-                    fh.write(f"{date.today().isoformat()} [agentic {model}] {e['repo']}#{e['pr']} "
+                    fh.write(f"{date.today().isoformat()} [{mode} {model}] {e['repo']}#{e['pr']} "
                              f"{'CAUGHT' if hit else 'missed'} fetches={nf} findings={len(findings)}\n")
             except OSError:
                 pass
 
     n = len(manifest) or 1
-    summary = (f"agentic recall: {caught}/{n} ({100 * caught // n}%) · {total_fetches} "
-               f"total tool-fetches · baseline diff-only ≈ 24%")
+    summary = (f"{mode} recall: {caught}/{n} ({100 * caught // n}%) · {total_fetches} "
+               f"total tool-fetches")
     print(f"\n{summary}")
     try:
         with open(Path(__file__).parent / "_agentic.log", "a", encoding="utf-8") as fh:
-            fh.write(f"{date.today().isoformat()} [agentic {model}] SUMMARY {summary}\n")
+            fh.write(f"{date.today().isoformat()} [{mode} {model}] SUMMARY {summary}\n")
     except OSError:
         pass
     return 0
