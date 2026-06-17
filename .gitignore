@@ -28,3 +28,4 @@ Thumbs.db
 evals/results/
 evals/_matrix.log
 evals/_realpr_cache.json
+evals/_agentic.log
