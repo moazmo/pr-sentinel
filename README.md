@@ -155,7 +155,7 @@ gate:
   level: "off"                # fail a Check Run at/above this severity so merges can be required
 sast:
   enabled: false              # run Semgrep over changed files; hits go through the verifier's triage
-  rules: "auto"               # semgrep --config value (needs Semgrep in the runner; opt-in, live-path)
+  rules: "p/default"          # semgrep ruleset (needs Semgrep in the runner; opt-in, live-path; measured FP-safe but no net gain — D39)
 describe: false               # maintain a generated summary in the PR body
 dry_run: false                # estimate cost, post the estimate, no LLM calls
 ```

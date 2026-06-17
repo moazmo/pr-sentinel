@@ -174,8 +174,11 @@ class SastConfig(BaseModel):
     finding, so the rule engine's noise is filtered by the LLM (SAST-Genius pattern)."""
 
     enabled: bool = False
-    # Semgrep --config value: "auto" | a registry pack (e.g. "p/ci") | a path.
-    rules: str = "auto"
+    # Semgrep --config value: a registry pack (e.g. "p/default", "p/ci") | a path.
+    # NOT "auto": `--config auto` refuses to run when telemetry is disabled and
+    # pings semgrep.dev to pick rules — wrong for a privacy-first tool (measured
+    # 2026-06-17, D39). "p/default" is the broad OSS pack, telemetry-free.
+    rules: str = "p/default"
 
 
 class GateConfig(BaseModel):

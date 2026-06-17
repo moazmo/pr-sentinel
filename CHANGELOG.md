@@ -9,6 +9,13 @@ All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](ht
 - **Multi-language repo-context:** `repo_context` now resolves **JS/TS** (same-file siblings + relative `./`/`../` imports) and **Go** (same-file/same-package siblings), not just Python — dependency-free regex extraction. Default still off, pending a measured multi-language win on the real-PR benchmark (Go cross-package needs a directory listing the fetch path doesn't provide → deferred to the agentic upgrade).
 - `evals/realpr.py --repo-context` to A/B the lever on real PRs.
 - `evals/realpr.py --precision`: a forward-fixed-version false-positive proxy → reports **precision + F1**, not recall-only (the F1 axis two external review passes flagged as missing).
+- `evals/sast_probe.py`: measures the SAST lever (Semgrep via the official Docker image) on both the real-PR set and the seeded fixtures — Phase 1 ($0 raw recall + FP), Phase 2 (preset hits → anchor → verifier).
+
+### Measured / decided
+- **SAST grounding measured (D39):** raw Semgrep = 0/32 on the real-PR set (logic bugs, wrong instrument), 12 catches / 3 clean-FPs on the seeded security fixtures; through the pipeline the verifier **killed 3/3 of the FPs (0 leaked)** — the design is **precision-safe** — but added **0 net recall** (the analysts already catch those). → `sast.enabled` stays **opt-in/off** and **no SAST image variant is shipped** (no measured win to justify the dependency). Same disciplined outcome as repo_context (D37) and the agentic loop (D38).
+
+### Changed
+- `sast.rules` default `"auto"` → `"p/default"`: `--config auto` refuses to run when Semgrep telemetry is disabled and pings semgrep.dev to select rules — wrong for a privacy-first tool (D39).
 
 ### Security
 - **Injection hardening for repository-context prefetch:** prefetched definitions (`<repo_context>`, fetched from the PR head ref and therefore PR-controlled) are now run through `sanitize_for_prompt`, and `repo_context` is added to the delimiter scrubber — a hostile imported module can no longer break out of the data block (closes a gap in the opt-in `accuracy.repo_context` path).

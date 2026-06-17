@@ -92,7 +92,7 @@ def parse_semgrep_json(
     return findings
 
 
-def run_semgrep_cli(workdir: str, rules: str = "auto", timeout: float = 120.0) -> str | None:
+def run_semgrep_cli(workdir: str, rules: str = "p/default", timeout: float = 120.0) -> str | None:
     """Run Semgrep over `workdir`, returning raw JSON (None on any failure).
     The scanner is optional infrastructure — absence degrades to no SAST."""
     try:
@@ -111,7 +111,7 @@ def semgrep_findings(
     contents: dict[str, str],
     added_lines: dict[str, set[int]],
     line_text: dict[str, dict[int, str]],
-    rules: str = "auto",
+    rules: str = "p/default",
 ) -> list[Finding]:
     """Write the head contents to a temp tree, scan, and parse. `contents` maps
     path -> full file text (from the head ref the context pass already fetched)."""
