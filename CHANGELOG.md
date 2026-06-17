@@ -13,6 +13,7 @@ All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](ht
 - `evals/agentic_probe2.py`: the *proper* agentic loop (def-only `fetch_definition`, RepoAudit hypothesize→confirm→validate, `reasoning_effort=high`) with a directly-comparable diff-only control.
 
 ### Measured / decided
+- **Stronger same-family model measured (D43):** `deepseek-v4-pro` recall **11/60** vs flash **17/60** on the 60-PR benchmark — **worse, not better** (more conservative + flakier JSON adherence). A bigger same-family model is not the capability lever; a true flagship (GPT-5/Opus) test is gated on a key. Added a Windows keep-awake for long evals (modern-standby killed three runs).
 - **Real-PR benchmark sharpened (D41):** `realpr.py` repo set expanded 9 → 20 repos (Py/JS/TS/Go) → **60 PRs**. Baseline: recall **17/60 (28%)**, precision **68%**, **F1 40%**, clean-pass 52/60 — confirms the ~24–27% real-PR story on 2× the data, now with an F1 axis. The ruler for every lever + the reward signal for a future tuned model.
 - **`reasoning_effort=high` measured (D42):** analyst effort=high scored **15/60** vs the default **17/60** — no gain, slightly worse, more cost. Default `accuracy.reasoning_effort` stays `""`. `realpr.py` now honors `PR_SENTINEL_REASONING_EFFORT`/`PR_SENTINEL_ANALYST_THINKING` (pure-env A/B, like `run.py`).
 - **Premium tuned model (Lever 5) + feedback flywheel (Lever 6) specced, gated (D-roadmap):** the only levers left that can move recall (capability + data); both gated on launch/adoption. See ROADMAP.
