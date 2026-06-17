@@ -3,12 +3,15 @@ dominated by *context-dependent* bugs a ±N-line diff can't explain — a caller
 expectations, a helper's contract, why a removed line mattered. The frontier
 tools close this with agentic, repo-aware review.
 
-A true agentic tool-loop (model fetches symbols on demand) is blocked on our
-stack: DeepSeek's thinking mode — which we proved is essential (D36) — does not
-support function calling. So this is the compatible alternative: **deterministically
-pre-fetch** the definitions of the symbols the diff references but doesn't define,
-rank + bound them, and hand the analysts a delimited "repository context" block
-(data under review, never instructions — same injection rules as the diff).
+An agentic tool-loop (model fetches symbols on demand) is the stronger approach,
+and it IS viable on `deepseek-v4-flash` — thinking mode supports multi-turn tool
+calls (corrected 2026-06-17; the earlier "blocked" belief was about the legacy
+`deepseek-reasoner` alias — see D38). This module stays as the cheaper, zero-extra-
+round-trip alternative: **deterministically pre-fetch** the definitions of the
+symbols the diff references but doesn't define, rank + bound them, and hand the
+analysts a delimited "repository context" block (data under review, never
+instructions — same injection rules as the diff). Use it when the agentic loop is
+off; measure the loop (`evals/agentic_probe.py`) before promoting it to a graph node.
 
 Multi-language (D37): **Python** resolves same-file siblings + imported modules;
 **JS/TS** resolves same-file siblings + relative (`./`, `../`) imports; **Go**
