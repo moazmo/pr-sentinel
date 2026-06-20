@@ -1,0 +1,482 @@
+[
+ {
+  "repo": "psf/requests",
+  "sha": "2b4e315e5faf844705d42b29c751253041757e45",
+  "pr": 531,
+  "title": "fixed bug in setup.py where running from outside project dir would fail",
+  "file": "setup.py",
+  "patch": "@@ -37,21 +37,28 @@\n     required.append('chardet>=1.0.0')\n     packages.append('requests.packages.oreos')\n \n+package_directory = os.path.realpath(os.path.dirname(__file__))\n+\n+def get_file_contents(file_path):\n+  \"\"\"Get the context of the file using full path name\"\"\"\n+  full_path = os.path.join(package_directory, file_path)\n+  return open(full_path, 'r').read()\n+\n \n setup(\n     name='requests',\n     version=requests.__version__,\n     description='Python HTTP for Humans.',\n-    long_description=open('README.rst').read() + '\\n\\n' +\n-                     open('HISTORY.rst').read(),\n+    long_description=get_file_contents('README.rst') + '\\n\\n' +\n+                     get_file_contents('HISTORY.rst'),\n     author='Kenneth Reitz',\n     author_email='me@kennethreitz.com',\n     url='http://python-requests.org',\n     packages=packages,\n     package_data={'': ['LICENSE', 'NOTICE']},\n     include_package_data=True,\n     install_requires=required,\n-    license=open(\"LICENSE\").read(),\n+    license=get_file_contents('LICENSE'),\n     classifiers=(\n         'Development Status :: 5 - Production/Stable',\n         'Intended Audience :: Developers',"
+ },
+ {
+  "repo": "psf/requests",
+  "sha": "895f8c89ce100187ade96f9b656d1ed300163000",
+  "pr": 925,
+  "title": "Fix a bug in _encode_params",
+  "file": "requests/models.py",
+  "patch": "@@ -35,7 +35,7 @@\n     guess_json_utf)\n from .compat import (\n     cookielib, urlparse, urlunparse, urljoin, urlsplit, urlencode, str, bytes,\n-    StringIO, is_py2, chardet, json, builtin_str, urldefrag)\n+    StringIO, is_py2, chardet, json, builtin_str, urldefrag, basestring)\n \n REDIRECT_STATI = (codes.moved, codes.found, codes.other, codes.temporary_moved)\n CONTENT_CHUNK_SIZE = 10 * 1024\n@@ -334,7 +334,9 @@ def _encode_params(data):\n         elif hasattr(data, '__iter__'):\n             result = []\n             for k, vs in to_key_val_list(data):\n-                for v in isinstance(vs, list) and vs or [vs]:\n+                if isinstance(vs, basestring) or not hasattr(vs, '__iter__'):\n+                    vs = [vs]\n+                for v in vs:\n                     if v is not None:\n                         result.append(\n                             (k.encode('utf-8') if isinstance(k, str) else k,"
+ },
+ {
+  "repo": "psf/requests",
+  "sha": "2ca692d947fa18ba3642a00fa493e8a550d6a55a",
+  "pr": 1012,
+  "title": "Fixed small bug where user couldn't add custom headers",
+  "file": "requests/models.py",
+  "patch": "@@ -295,7 +295,7 @@ def prepare_headers(self, headers):\n         \"\"\"Prepares the given HTTP headers.\"\"\"\n \n         if headers:\n-            self.headers = CaseInsensitiveDict(self.headers)\n+            self.headers = CaseInsensitiveDict(headers)\n         else:\n             self.headers = CaseInsensitiveDict()\n "
+ },
+ {
+  "repo": "psf/requests",
+  "sha": "c8d8d5fffd6197d8113551e95791f957a9dd6666",
+  "pr": 352,
+  "title": "Fix bug in HTTP-digest auth w/ URI having query string",
+  "file": "requests/auth.py",
+  "patch": "@@ -86,7 +86,9 @@ def handle_401(self, r):\n             # XXX not implemented yet\n             entdig = None\n             p_parsed = urlparse(r.request.url)\n-            path = p_parsed.path + p_parsed.query\n+            path = p_parsed.path\n+            if p_parsed.query:\n+                path += '?' + p_parsed.query\n \n             A1 = '%s:%s:%s' % (self.username, realm, self.password)\n             A2 = '%s:%s' % (r.request.method, path)"
+ },
+ {
+  "repo": "psf/requests",
+  "sha": "bac0e3e2ade9e53ad265720db6c5c69eee9b0cba",
+  "pr": 313,
+  "title": "fix bug that causes iter_lines to truncate content",
+  "file": "requests/models.py",
+  "patch": "@@ -597,7 +597,7 @@ def iter_lines(self, newlines=None, decode_unicode=None):\n         def generate():\n             chunk = []\n \n-            while 1:\n+            while True:\n                 c = self.raw.read(1)\n                 if not c:\n                     break\n@@ -608,6 +608,11 @@ def generate():\n                 else:\n                     chunk.append(c)\n \n+            # Yield the remainder, in case the response\n+            # did not terminate with a newline\n+            if chunk:\n+                yield ''.join(chunk)\n+\n             self._content_consumed = True\n \n         gen = generate()"
+ },
+ {
+  "repo": "pallets/flask",
+  "sha": "2c68f86336dc8729f58e8e19af0f49c269c1cfaa",
+  "pr": 3157,
+  "title": "Fix teardown bug in FlaskClient",
+  "file": "flask/testing.py",
+  "patch": "@@ -206,12 +206,17 @@ def __enter__(self):\n     def __exit__(self, exc_type, exc_value, tb):\n         self.preserve_context = False\n \n-        # on exit we want to clean up earlier.  Normally the request context\n-        # stays preserved until the next request in the same thread comes\n-        # in.  See RequestGlobals.push() for the general behavior.\n-        top = _request_ctx_stack.top\n-        if top is not None and top.preserved:\n-            top.pop()\n+        # Normally the request context is preserved until the next\n+        # request in the same thread comes. When the client exits we\n+        # want to clean up earlier. Pop request contexts until the stack\n+        # is empty or a non-preserved one is found.\n+        while True:\n+            top = _request_ctx_stack.top\n+\n+            if top is not None and top.preserved:\n+                top.pop()\n+            else:\n+                break\n \n \n class FlaskCliRunner(CliRunner):"
+ },
+ {
+  "repo": "pallets/flask",
+  "sha": "8e589daaf2cec6a10262b8ff88801127f2fa14fd",
+  "pr": 4109,
+  "title": "Fixed static typing bug where app.template_global() doesn't accept arguments #4098",
+  "file": "src/flask/typing.py",
+  "patch": "@@ -40,8 +40,8 @@\n ErrorHandlerCallable = t.Callable[[Exception], ResponseReturnValue]\n TeardownCallable = t.Callable[[t.Optional[BaseException]], None]\n TemplateContextProcessorCallable = t.Callable[[], t.Dict[str, t.Any]]\n-TemplateFilterCallable = t.Callable[[t.Any], str]\n-TemplateGlobalCallable = t.Callable[[], t.Any]\n-TemplateTestCallable = t.Callable[[t.Any], bool]\n+TemplateFilterCallable = t.Callable[..., t.Any]\n+TemplateGlobalCallable = t.Callable[..., t.Any]\n+TemplateTestCallable = t.Callable[..., bool]\n URLDefaultCallable = t.Callable[[str, dict], None]\n URLValuePreprocessorCallable = t.Callable[[t.Optional[str], t.Optional[dict]], None]"
+ },
+ {
+  "repo": "pallets/flask",
+  "sha": "2ab13cc9747ddc35bf3103d870c7dd0173ef8d1a",
+  "pr": 811,
+  "title": "Remove Werkzeug bug workaround from flask/app.py",
+  "file": "flask/app.py",
+  "patch": "@@ -968,11 +968,6 @@ def index():\n         # Add the required methods now.\n         methods |= required_methods\n \n-        # due to a werkzeug bug we need to make sure that the defaults are\n-        # None if they are an empty dictionary.  This should not be necessary\n-        # with Werkzeug 0.7\n-        options['defaults'] = options.get('defaults') or None\n-\n         rule = self.url_rule_class(rule, methods=methods, **options)\n         rule.provide_automatic_options = provide_automatic_options\n "
+ },
+ {
+  "repo": "pallets/flask",
+  "sha": "88500f5cc709e2e931e6547ed9b58033a50215a8",
+  "pr": 1806,
+  "title": "Forward ported CLI tests from Flask-CLI and fixed a bug with the CLI's name.",
+  "file": "flask/app.py",
+  "patch": "@@ -546,7 +546,7 @@ def __init__(self, import_name, static_path=None, static_url_path=None,\n         #: provided by Flask itself and can be overridden.\n         #:\n         #: This is an instance of a :class:`click.Group` object.\n-        self.cli = cli.AppGroup(self)\n+        self.cli = cli.AppGroup(self.name)\n \n     def _get_error_handlers(self):\n         from warnings import warn"
+ },
+ {
+  "repo": "pallets/flask",
+  "sha": "19d7e6532f9187ba8a81b2d2ad9afe03e5e5500a",
+  "pr": 2217,
+  "title": "shorten output when ImportError due to app bug.",
+  "file": "flask/cli.py",
+  "patch": "@@ -93,7 +93,9 @@ def locate_app(app_id):\n         # Reraise the ImportError if it occurred within the imported module.\n         # Determine this by checking whether the trace has a depth > 1.\n         if sys.exc_info()[-1].tb_next:\n-            raise\n+            stack_trace = traceback.format_exc()\n+            raise NoAppException('There was an error trying to import'\n+                    ' the app (%s):\\n%s' % (module, stack_trace))\n         else:\n             raise NoAppException('The file/path provided (%s) does not appear'\n                                  ' to exist.  Please verify the path is '"
+ },
+ {
+  "repo": "encode/httpx",
+  "sha": "0b4a83257bef85559d91b466e4ac94a216a25485",
+  "pr": 1828,
+  "title": "BUG: wsgi.error should be TextIO, not BytesIO in WSGI transport",
+  "file": "httpx/_transports/wsgi.py",
+  "patch": "@@ -1,5 +1,6 @@\n import io\n import itertools\n+import sys\n import typing\n from urllib.parse import unquote\n \n@@ -67,11 +68,13 @@ def __init__(\n         raise_app_exceptions: bool = True,\n         script_name: str = \"\",\n         remote_addr: str = \"127.0.0.1\",\n+        wsgi_errors: typing.Optional[typing.TextIO] = None,\n     ) -> None:\n         self.app = app\n         self.raise_app_exceptions = raise_app_exceptions\n         self.script_name = script_name\n         self.remote_addr = remote_addr\n+        self.wsgi_errors = wsgi_errors\n \n     def handle_request(\n         self,\n@@ -94,7 +97,7 @@ def handle_request(\n             \"wsgi.version\": (1, 0),\n             \"wsgi.url_scheme\": scheme.decode(\"ascii\"),\n             \"wsgi.input\": wsgi_input,\n-            \"wsgi.errors\": io.BytesIO(),\n+            \"wsgi.errors\": self.wsgi_errors or sys.stderr,\n             \"wsgi.multithread\": True,\n             \"wsgi.multiprocess\": False,\n             \"wsgi.run_once\": False,"
+ },
+ {
+  "repo": "encode/httpx",
+  "sha": "ab9cd0ea112c703c91cf5a57b61ba2376ab39dac",
+  "pr": 153,
+  "title": "Fix bug in calculating maximum frame size",
+  "file": "httpx/dispatch/http2.py",
+  "patch": "@@ -4,7 +4,7 @@\n import h2.connection\n import h2.events\n \n-from ..concurrency.base import BaseStream, ConcurrencyBackend, TimeoutFlag\n+from ..concurrency.base import BaseStream, ConcurrencyBackend, TimeoutFlag, BaseEvent\n from ..config import TimeoutConfig, TimeoutTypes\n from ..models import AsyncRequest, AsyncResponse\n from ..utils import get_logger\n@@ -28,6 +28,7 @@ def __init__(\n         self.events = {}  # type: typing.Dict[int, typing.List[h2.events.Event]]\n         self.timeout_flags = {}  # type: typing.Dict[int, TimeoutFlag]\n         self.initialized = False\n+        self.window_update_received = {}  # type: typing.Dict[int, BaseEvent]\n \n     async def send(\n         self, request: AsyncRequest, timeout: TimeoutTypes = None\n@@ -42,6 +43,7 @@ async def send(\n \n         self.events[stream_id] = []\n         self.timeout_flags[stream_id] = TimeoutFlag()\n+        self.window_update_received[stream_id] = self.backend.create_event()\n \n         task, args = self.send_request_data, [stream_id, request.stream(), timeout]\n         async with self.backend.background_manager(task, *args):\n@@ -108,18 +110,27 @@ async def send_request_data(\n     async def send_data(\n         self, stream_id: int, data: bytes, timeout: TimeoutConfig = None\n     ) -> None:\n-        flow_control = self.h2_state.local_flow_control_window(stream_id)\n-        chunk_size = min(len(data), flow_control)\n-        for idx in range(0, len(data), chunk_size):\n-            chunk = data[idx : idx + chunk_size]\n-\n-            logger.debug(\n-                f\"send_data stream_id={stream_id} data=Data(<{len(chunk)} bytes>)\"\n+        while data:\n+            # The data will be divided into frames to send based on the flow control\n+            # window and the maximum frame size. Because the flow control window\n+            # can decrease in size, even possibly to zero, this will loop until all the\n+            # data is sent. In http2 specification:\n+            # https://tools.ietf.org/html/rfc7540#section-6.9\n+            flow_control = self.h2_state.local_flow_control_window(stream_id)\n+            chunk_size = min(\n+                len(data), flow_control, self.h2_state.max_outbound_frame_size\n             )\n-\n-            self.h2_state.send_data(stream_id, chunk)\n-            data_to_send = self.h2_state.data_to_send()\n-            await self.stream.write(data_to_send, timeout)\n+            if chunk_size == 0:\n+                # this means that the flow control window is 0 (either for the stream\n+                # or the connection one), and no data can be sent until the flow control\n+                # window is updated.\n+                await self.window_update_received[stream_id].wait()\n+                self.window_update_received[stream_id].clear()\n+            else:\n+                chunk, data = data[:chunk_size], data[chunk_size:]\n+                self.h2_state.send_data(stream_id, chunk)\n+                data_to_send = self.h2_state.data_to_send()\n+                await self.stream.write(data_to_send, timeout)\n \n     async def end_stream(self, stream_id: int, timeout: TimeoutConfig = None) -> None:\n         logger.debug(f\"end_stream stream_id={stream_id}\")\n@@ -148,15 +159,18 @@ async def receive_response(\n                 status_code = int(v.decode(\"ascii\", errors=\"ignore\"))\n             elif not k.startswith(b\":\"):\n                 headers.append((k, v))\n-        return status_code, headers\n+\n+        return (status_code, headers)\n \n     async def body_iter(\n         self, stream_id: int, timeout: TimeoutConfig = None\n     ) -> typing.AsyncIterator[bytes]:\n         while True:\n             event = await self.receive_event(stream_id, timeout)\n             if isinstance(event, h2.events.DataReceived):\n-                self.h2_state.acknowledge_received_data(len(event.data), stream_id)\n+                self.h2_state.acknowledge_received_data(\n+                    event.flow_controlled_length, stream_id\n+                )\n                 yield event.data\n             elif isinstance(event, (h2.events.StreamEnded, h2.events.StreamReset)):\n                 break\n@@ -173,6 +187,19 @@ async def receive_event(\n                 logger.debug(\n                     f\"receive_event stream_id={event_stream_id} event={event!r}\"\n                 )\n+                if isinstance(event, h2.events.WindowUpdated):\n+                    if event_stream_id == 0:\n+                        for window_update_event in self.window_update_received.values():\n+                            window_update_event.set()\n+                    else:\n+                        try:\n+                            self.window_update_received[event_stream_id].set()\n+                        except KeyError:\n+                            # the window_update_received dictionary is only relevant\n+                            # when sending data, which should never raise a KeyError\n+                            # here.\n+                            pass\n+\n                 if event_stream_id:\n                     self.events[event.stream_id].append(event)\n \n@@ -184,6 +211,7 @@ async def receive_event(\n     async def response_closed(self, stream_id: int) -> None:\n         del self.events[stream_id]\n         del self.timeout_flags[stream_id]\n+        del self.window_update_received[stream_id]\n \n         if not self.events and self.on_release is not None:\n             await self.on_release()"
+ },
+ {
+  "repo": "pallets/click",
+  "sha": "bc16dbf788861266177661b576291a1b264fb5de",
+  "pr": 2730,
+  "title": "fix bug in show defaults when using a flag option and a default map",
+  "file": "src/click/core.py",
+  "patch": "@@ -2800,7 +2800,7 @@ def _write_opts(opts: t.Sequence[str]) -> str:\n                 # For boolean flags that have distinct True/False opts,\n                 # use the opt without prefix instead of the value.\n                 default_string = split_opt(\n-                    (self.opts if self.default else self.secondary_opts)[0]\n+                    (self.opts if default_value else self.secondary_opts)[0]\n                 )[1]\n             elif self.is_bool_flag and not self.secondary_opts and not default_value:\n                 default_string = \"\""
+ },
+ {
+  "repo": "pallets/click",
+  "sha": "ebcbef923d3b9f118d1f21fd3d21645b52099e87",
+  "pr": 794,
+  "title": "Bug fix #793; use deterministic option name; can't rely on list.sort",
+  "file": "click/core.py",
+  "patch": "@@ -1548,8 +1548,8 @@ def _parse_decls(self, decls, expose_value):\n                     opts.append(decl)\n \n         if name is None and possible_names:\n-            possible_names.sort(key=lambda x: len(x[0]))\n-            name = possible_names[-1][1].replace('-', '_').lower()\n+            possible_names.sort(key=lambda x: -len(x[0]))  # group long options first\n+            name = possible_names[0][1].replace('-', '_').lower()\n             if not isidentifier(name):\n                 name = None\n "
+ },
+ {
+  "repo": "pallets/click",
+  "sha": "befb77bfe4b814687d9bd8e15c59ae64f579967c",
+  "pr": 1020,
+  "title": "path validation bug",
+  "file": "click/termui.py",
+  "patch": "@@ -8,7 +8,7 @@\n      isatty, strip_ansi, get_winterm_size, DEFAULT_COLUMNS, WIN\n from .utils import echo\n from .exceptions import Abort, UsageError\n-from .types import convert_type, Choice\n+from .types import convert_type, Choice, Path\n from .globals import resolve_color_default\n \n \n@@ -116,10 +116,11 @@ def prompt_func(text):\n             value = prompt_func(prompt)\n             if value:\n                 break\n-            # If a default is set and used, then the confirmation\n-            # prompt is always skipped because that's the only thing\n-            # that really makes sense.\n             elif default is not None:\n+                if isinstance(value_proc, Path):\n+                    # validate Path default value(exists, dir_okay etc.)\n+                    value = default\n+                    break\n                 return default\n         try:\n             result = value_proc(value)"
+ },
+ {
+  "repo": "pydantic/pydantic",
+  "sha": "8333bd59dd3424811f4e73cdd6e9414fd15bb6d7",
+  "pr": 9606,
+  "title": "Fix bug with mypy plugin's handling of covariant typevar fields",
+  "file": "pydantic/mypy.py",
+  "patch": "@@ -14,6 +14,7 @@\n     ARG_OPT,\n     ARG_POS,\n     ARG_STAR2,\n+    INVARIANT,\n     MDEF,\n     Argument,\n     AssignmentStmt,\n@@ -343,9 +344,10 @@ def to_argument(\n         force_optional: bool,\n         use_alias: bool,\n         api: SemanticAnalyzerPluginInterface,\n+        force_typevars_invariant: bool,\n     ) -> Argument:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.to_argument.\"\"\"\n-        variable = self.to_var(current_info, api, use_alias)\n+        variable = self.to_var(current_info, api, use_alias, force_typevars_invariant)\n         type_annotation = self.expand_type(current_info, api) if typed else AnyType(TypeOfAny.explicit)\n         return Argument(\n             variable=variable,\n@@ -354,26 +356,49 @@ def to_argument(\n             kind=ARG_NAMED_OPT if force_optional or self.has_default else ARG_NAMED,\n         )\n \n-    def expand_type(self, current_info: TypeInfo, api: SemanticAnalyzerPluginInterface) -> Type | None:\n+    def expand_type(\n+        self, current_info: TypeInfo, api: SemanticAnalyzerPluginInterface, force_typevars_invariant: bool = False\n+    ) -> Type | None:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.expand_type.\"\"\"\n         # The getattr in the next line is used to prevent errors in legacy versions of mypy without this attribute\n+        if force_typevars_invariant:\n+            # In some cases, mypy will emit an error \"Cannot use a covariant type variable as a parameter\"\n+            # To prevent that, we add an option to replace typevars with invariant ones while building certain\n+            # method signatures (in particular, `__init__`). There may be a better way to do this, if this causes\n+            # us problems in the future, we should look into why the dataclasses plugin doesn't have this issue.\n+            if isinstance(self.type, TypeVarType):\n+                modified_type = self.type.copy_modified()\n+                modified_type.variance = INVARIANT\n+                self.type = modified_type\n+\n         if self.type is not None and getattr(self.info, 'self_type', None) is not None:\n             # In general, it is not safe to call `expand_type()` during semantic analyzis,\n             # however this plugin is called very late, so all types should be fully ready.\n             # Also, it is tricky to avoid eager expansion of Self types here (e.g. because\n             # we serialize attributes).\n             with state.strict_optional_set(api.options.strict_optional):\n-                return expand_type(self.type, {self.info.self_type.id: fill_typevars(current_info)})\n+                filled_with_typevars = fill_typevars(current_info)\n+                if force_typevars_invariant:\n+                    for arg in filled_with_typevars.args:\n+                        if isinstance(arg, TypeVarType):\n+                            arg.variance = INVARIANT\n+                return expand_type(self.type, {self.info.self_type.id: filled_with_typevars})\n         return self.type\n \n-    def to_var(self, current_info: TypeInfo, api: SemanticAnalyzerPluginInterface, use_alias: bool) -> Var:\n+    def to_var(\n+        self,\n+        current_info: TypeInfo,\n+        api: SemanticAnalyzerPluginInterface,\n+        use_alias: bool,\n+        force_typevars_invariant: bool = False,\n+    ) -> Var:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.to_var.\"\"\"\n         if use_alias and self.alias is not None:\n             name = self.alias\n         else:\n             name = self.name\n \n-        return Var(name, self.expand_type(current_info, api))\n+        return Var(name, self.expand_type(current_info, api, force_typevars_invariant))\n \n     def serialize(self) -> JsonDict:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.serialize.\"\"\"\n@@ -858,6 +883,7 @@ def add_initializer(\n             requires_dynamic_aliases=requires_dynamic_aliases,\n             use_alias=use_alias,\n             is_settings=is_settings,\n+            force_typevars_invariant=True,\n         )\n \n         if is_root_model and MYPY_VERSION_TUPLE <= (1, 0, 1):\n@@ -1037,6 +1063,7 @@ def get_field_arguments(\n         use_alias: bool,\n         requires_dynamic_aliases: bool,\n         is_settings: bool,\n+        force_typevars_invariant: bool = False,\n     ) -> list[Argument]:\n         \"\"\"Helper function used during the construction of the `__init__` and `model_construct` method signatures.\n \n@@ -1050,6 +1077,7 @@ def get_field_arguments(\n                 force_optional=requires_dynamic_aliases or is_settings,\n                 use_alias=use_alias,\n                 api=self._api,\n+                force_typevars_invariant=force_typevars_invariant,\n             )\n             for field in fields\n             if not (use_alias and field.has_dynamic_alias)"
+ },
+ {
+  "repo": "pydantic/pydantic",
+  "sha": "c48850877745c3a9b2f5a717f0758d312a212975",
+  "pr": 9476,
+  "title": "Fix a bug when setting StringConstraint(strict=False)",
+  "file": "pydantic/types.py",
+  "patch": "@@ -705,7 +705,7 @@ def __iter__(self) -> Iterator[BaseMetadata]:\n         if self.max_length is not None:\n             yield MaxLen(self.max_length)\n         if self.strict is not None:\n-            yield Strict()\n+            yield Strict(self.strict)\n         if (\n             self.strip_whitespace is not None\n             or self.pattern is not None"
+ },
+ {
+  "repo": "pydantic/pydantic",
+  "sha": "7ac7881ff6c11a66f0bf09d65062cd798853fb30",
+  "pr": 9124,
+  "title": "Fix discriminated union bug with unsubstituted type var",
+  "file": "pydantic/_internal/_generate_schema.py",
+  "patch": "@@ -433,9 +433,9 @@ class CollectedInvalid(Exception):\n     def clean_schema(self, schema: CoreSchema) -> CoreSchema:\n         schema = self.collect_definitions(schema)\n         schema = simplify_schema_references(schema)\n-        schema = _discriminated_union.apply_discriminators(schema)\n         if collect_invalid_schemas(schema):\n             raise self.CollectedInvalid()\n+        schema = _discriminated_union.apply_discriminators(schema)\n         schema = validate_core_schema(schema)\n         return schema\n "
+ },
+ {
+  "repo": "pydantic/pydantic",
+  "sha": "9fc5e18209ac484ceaecbb270d22c4f93929699b",
+  "pr": 8826,
+  "title": "Fix bug with no_strict_optional=True caused by API deferral",
+  "file": "pydantic/mypy.py",
+  "patch": "@@ -340,16 +340,25 @@ def __init__(\n         self.type = type\n         self.info = info\n \n-    def to_argument(self, current_info: TypeInfo, typed: bool, force_optional: bool, use_alias: bool) -> Argument:\n+    def to_argument(\n+        self,\n+        current_info: TypeInfo,\n+        typed: bool,\n+        force_optional: bool,\n+        use_alias: bool,\n+        api: SemanticAnalyzerPluginInterface,\n+    ) -> Argument:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.to_argument.\"\"\"\n+        variable = self.to_var(current_info, api, use_alias)\n+        type_annotation = self.expand_type(current_info, api) if typed else AnyType(TypeOfAny.explicit)\n         return Argument(\n-            variable=self.to_var(current_info, use_alias),\n-            type_annotation=self.expand_type(current_info) if typed else AnyType(TypeOfAny.explicit),\n+            variable=variable,\n+            type_annotation=type_annotation,\n             initializer=None,\n             kind=ARG_NAMED_OPT if force_optional or self.has_default else ARG_NAMED,\n         )\n \n-    def expand_type(self, current_info: TypeInfo) -> Type | None:\n+    def expand_type(self, current_info: TypeInfo, api: SemanticAnalyzerPluginInterface) -> Type | None:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.expand_type.\"\"\"\n         # The getattr in the next line is used to prevent errors in legacy versions of mypy without this attribute\n         if self.type is not None and getattr(self.info, 'self_type', None) is not None:\n@@ -359,18 +368,19 @@ def expand_type(self, current_info: TypeInfo) -> Type | None:\n             # we serialize attributes).\n             expanded_type = expand_type(self.type, {self.info.self_type.id: fill_typevars(current_info)})\n             if isinstance(self.type, UnionType) and not isinstance(expanded_type, UnionType):\n-                raise _DeferAnalysis()\n+                if not api.final_iteration:\n+                    raise _DeferAnalysis()\n             return expanded_type\n         return self.type\n \n-    def to_var(self, current_info: TypeInfo, use_alias: bool) -> Var:\n+    def to_var(self, current_info: TypeInfo, api: SemanticAnalyzerPluginInterface, use_alias: bool) -> Var:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.to_var.\"\"\"\n         if use_alias and self.alias is not None:\n             name = self.alias\n         else:\n             name = self.name\n \n-        return Var(name, self.expand_type(current_info))\n+        return Var(name, self.expand_type(current_info, api))\n \n     def serialize(self) -> JsonDict:\n         \"\"\"Based on mypy.plugins.dataclasses.DataclassAttribute.serialize.\"\"\"\n@@ -478,7 +488,7 @@ def transform(self) -> bool:\n         try:\n             self.add_initializer(fields, config, is_settings, is_root_model)\n             self.add_model_construct_method(fields, config, is_settings)\n-            self.set_frozen(fields, frozen=config.frozen is True)\n+            self.set_frozen(fields, self._api, frozen=config.frozen is True)\n         except _DeferAnalysis:\n             if not self._api.final_iteration:\n                 self._api.defer()\n@@ -915,7 +925,7 @@ def add_model_construct_method(\n             is_classmethod=True,\n         )\n \n-    def set_frozen(self, fields: list[PydanticModelField], frozen: bool) -> None:\n+    def set_frozen(self, fields: list[PydanticModelField], api: SemanticAnalyzerPluginInterface, frozen: bool) -> None:\n         \"\"\"Marks all fields as properties so that attempts to set them trigger mypy errors.\n \n         This is the same approach used by the attrs and dataclasses plugins.\n@@ -940,7 +950,7 @@ def set_frozen(self, fields: list[PydanticModelField], frozen: bool) -> None:\n                     detail = f'sym_node.node: {var_str} (of type {var.__class__})'\n                     error_unexpected_behavior(detail, self._api, self._cls)\n             else:\n-                var = field.to_var(info, use_alias=False)\n+                var = field.to_var(info, api, use_alias=False)\n                 var.info = info\n                 var.is_property = frozen\n                 var._fullname = info.fullname + '.' + var.name\n@@ -1037,7 +1047,11 @@ def get_field_arguments(\n         info = self._cls.info\n         arguments = [\n             field.to_argument(\n-                info, typed=typed, force_optional=requires_dynamic_aliases or is_settings, use_alias=use_alias\n+                info,\n+                typed=typed,\n+                force_optional=requires_dynamic_aliases or is_settings,\n+                use_alias=use_alias,\n+                api=self._api,\n             )\n             for field in fields\n             if not (use_alias and field.has_dynamic_alias)"
+ },
+ {
+  "repo": "pydantic/pydantic",
+  "sha": "8364920acb272e2df5c6e261ca67622f3d6d1874",
+  "pr": 8718,
+  "title": "Reverting problematic fix from 2.6 release, fixing schema building bug",
+  "file": "pydantic/_internal/_generate_schema.py",
+  "patch": "@@ -438,8 +438,6 @@ def clean_schema(self, schema: CoreSchema) -> CoreSchema:\n         if collect_invalid_schemas(schema):\n             raise self.CollectedInvalid()\n         schema = validate_core_schema(schema)\n-        if 'definitions' in schema:\n-            schema['definitions'] = list(reversed(schema['definitions']))\n         return schema\n \n     def collect_definitions(self, schema: CoreSchema) -> CoreSchema:"
+ },
+ {
+  "repo": "psf/black",
+  "sha": "77f16a777bef3e9086ef84d902d44df598f04ccb",
+  "pr": 4764,
+  "title": "Fix bug where module docstrings would be treated as normal strings if preceded by comments",
+  "file": "src/black/lines.py",
+  "patch": "@@ -559,15 +559,20 @@ def maybe_empty_lines(self, current_line: Line) -> LinesBlock:\n         before, after = self._maybe_empty_lines(current_line)\n         previous_after = self.previous_block.after if self.previous_block else 0\n         before = max(0, before - previous_after)\n-        if (\n+        if Preview.fix_module_docstring_detection in self.mode:\n             # Always have one empty line after a module docstring\n-            self.previous_block\n-            and self.previous_block.previous_block is None\n-            and len(self.previous_block.original_line.leaves) == 1\n-            and self.previous_block.original_line.is_docstring\n-            and not (current_line.is_class or current_line.is_def)\n-        ):\n-            before = 1\n+            if self._line_is_module_docstring(current_line):\n+                before = 1\n+        else:\n+            if (\n+                # Always have one empty line after a module docstring\n+                self.previous_block\n+                and self.previous_block.previous_block is None\n+                and len(self.previous_block.original_line.leaves) == 1\n+                and self.previous_block.original_line.is_docstring\n+                and not (current_line.is_class or current_line.is_def)\n+            ):\n+                before = 1\n \n         block = LinesBlock(\n             mode=self.mode,\n@@ -595,6 +600,22 @@ def maybe_empty_lines(self, current_line: Line) -> LinesBlock:\n         self.previous_block = block\n         return block\n \n+    def _line_is_module_docstring(self, current_line: Line) -> bool:\n+        previous_block = self.previous_block\n+        if not previous_block:\n+            return False\n+        if (\n+            len(previous_block.original_line.leaves) != 1\n+            or not previous_block.original_line.is_docstring\n+            or current_line.is_class\n+            or current_line.is_def\n+        ):\n+            return False\n+        while previous_block := previous_block.previous_block:\n+            if not previous_block.original_line.is_comment:\n+                return False\n+        return True\n+\n     def _maybe_empty_lines(self, current_line: Line) -> tuple[int, int]:  # noqa: C901\n         max_allowed = 1\n         if current_line.depth == 0:"
+ },
+ {
+  "repo": "psf/black",
+  "sha": "24e4cb20ab03c20af390fec7303207af2a4a09e8",
+  "pr": 4673,
+  "title": "Fix backslash cr nl bug",
+  "file": "src/blib2to3/pgen2/tokenize.py",
+  "patch": "@@ -113,7 +113,17 @@ def transform_whitespace(\n         and prev_token.type not in (TokenType.nl, TokenType.newline)\n     ):\n         token_str = source[token.start_index : token.end_index]\n-        if token_str.startswith(\"\\\\\\n\"):\n+        if token_str.startswith(\"\\\\\\r\\n\"):\n+            return pytokens.Token(\n+                TokenType.nl,\n+                token.start_index,\n+                token.start_index + 3,\n+                token.start_line,\n+                token.start_col,\n+                token.start_line,\n+                token.start_col + 3,\n+            )\n+        elif token_str.startswith(\"\\\\\\n\") or token_str.startswith(\"\\\\\\r\"):\n             return pytokens.Token(\n                 TokenType.nl,\n                 token.start_index,"
+ },
+ {
+  "repo": "psf/black",
+  "sha": "dba3c2695c59fdb11825dbdf8f3b0ab6e0b368b2",
+  "pr": 3615,
+  "title": "Fix bug introduced in #3564.",
+  "file": "src/black/lines.py",
+  "patch": "@@ -598,7 +598,7 @@ def _maybe_empty_lines(self, current_line: Line) -> Tuple[int, int]:\n                     before = 1\n                 elif (\n                     not depth\n-                    and self.previous_defs[-1]\n+                    and self.previous_defs[-1].depth\n                     and current_line.leaves[-1].type == token.COLON\n                     and (\n                         current_line.leaves[0].value"
+ },
+ {
+  "repo": "psf/black",
+  "sha": "bb588073ab286a9f1f8d839ab2cebe13011dd22c",
+  "pr": 3950,
+  "title": "Fix parser bug where \"type\" was misinterpreted as a keyword inside a match",
+  "file": "src/blib2to3/pgen2/parse.py",
+  "patch": "@@ -211,6 +211,7 @@ def __init__(self, grammar: Grammar, convert: Optional[Convert] = None) -> None:\n         # See note in docstring above. TL;DR this is ignored.\n         self.convert = convert or lam_sub\n         self.is_backtracking = False\n+        self.last_token: Optional[int] = None\n \n     def setup(self, proxy: \"TokenProxy\", start: Optional[int] = None) -> None:\n         \"\"\"Prepare for parsing.\n@@ -236,6 +237,7 @@ def setup(self, proxy: \"TokenProxy\", start: Optional[int] = None) -> None:\n         self.rootnode: Optional[NL] = None\n         self.used_names: Set[str] = set()\n         self.proxy = proxy\n+        self.last_token = None\n \n     def addtoken(self, type: int, value: str, context: Context) -> bool:\n         \"\"\"Add a token; return True iff this is the end of the program.\"\"\"\n@@ -317,6 +319,7 @@ def _addtoken(self, ilabel: int, type: int, value: str, context: Context) -> boo\n                         dfa, state, node = self.stack[-1]\n                         states, first = dfa\n                     # Done with this token\n+                    self.last_token = type\n                     return False\n \n             else:\n@@ -343,9 +346,23 @@ def classify(self, type: int, value: str, context: Context) -> List[int]:\n                 return [self.grammar.keywords[value]]\n             elif value in self.grammar.soft_keywords:\n                 assert type in self.grammar.tokens\n+                # Current soft keywords (match, case, type) can only appear at the\n+                # beginning of a statement. So as a shortcut, don't try to treat them\n+                # like keywords in any other context.\n+                # ('_' is also a soft keyword in the real grammar, but for our grammar\n+                # it's just an expression, so we don't need to treat it specially.)\n+                if self.last_token not in (\n+                    None,\n+                    token.INDENT,\n+                    token.DEDENT,\n+                    token.NEWLINE,\n+                    token.SEMI,\n+                    token.COLON,\n+                ):\n+                    return [self.grammar.tokens[type]]\n                 return [\n-                    self.grammar.soft_keywords[value],\n                     self.grammar.tokens[type],\n+                    self.grammar.soft_keywords[value],\n                 ]\n \n         ilabel = self.grammar.tokens.get(type)"
+ },
+ {
+  "repo": "psf/black",
+  "sha": "edf1c9dc0f20239b9d5351d8b0607c9e936dd43f",
+  "pr": 1809,
+  "title": "Fix bug which causes f-expressions to be split",
+  "file": "src/black/__init__.py",
+  "patch": "@@ -3611,13 +3611,14 @@ class StringSplitter(CustomSplitMapMixin, BaseStringSplitter):\n     MIN_SUBSTR_SIZE = 6\n     # Matches an \"f-expression\" (e.g. {var}) that might be found in an f-string.\n     RE_FEXPR = r\"\"\"\n-    (?<!\\{)\\{\n+    (?<!\\{) (?:\\{\\{)* \\{ (?!\\{)\n         (?:\n             [^\\{\\}]\n             | \\{\\{\n             | \\}\\}\n+            | (?R)\n         )+?\n-    (?<!\\})(?:\\}\\})*\\}(?!\\})\n+    (?<!\\}) \\} (?:\\}\\})* (?!\\})\n     \"\"\"\n \n     def do_splitter_match(self, line: Line) -> TMatchResult:"
+ },
+ {
+  "repo": "django/django",
+  "sha": "c3ca6075cc0ad425bcf905fe14062f38eb9fbcbf",
+  "pr": 18542,
+  "title": "Fixed #35732 -- Wrapped Postgresql Concat args in parenthesis to fix operator precedence bug.",
+  "file": "django/db/models/functions/text.py",
+  "patch": "@@ -78,7 +78,7 @@ def pipes_concat_sql(self, compiler, connection, **extra_context):\n         return super(ConcatPair, coalesced).as_sql(\n             compiler,\n             connection,\n-            template=\"%(expressions)s\",\n+            template=\"(%(expressions)s)\",\n             arg_joiner=\" || \",\n             **extra_context,\n         )"
+ },
+ {
+  "repo": "django/django",
+  "sha": "1ca825e4dc186da2b93292b5c848a3e5445968d7",
+  "pr": 11062,
+  "title": "Subquery resolving refactor and bug fixing.",
+  "file": "django/db/models/sql/query.py",
+  "patch": "@@ -22,7 +22,7 @@\n from django.db.models.aggregates import Count\n from django.db.models.constants import LOOKUP_SEP\n from django.db.models.expressions import (\n-    BaseExpression, Col, F, OuterRef, Ref, SimpleCol, Subquery,\n+    BaseExpression, Col, F, OuterRef, Ref, SimpleCol,\n )\n from django.db.models.fields import Field\n from django.db.models.fields.related_lookups import MultiColSource\n@@ -382,22 +382,26 @@ def rewrite_cols(self, annotation, col_cnt):\n                 # before the contains_aggregate/is_summary condition below.\n                 new_expr, col_cnt = self.rewrite_cols(expr, col_cnt)\n                 new_exprs.append(new_expr)\n-            elif isinstance(expr, (Col, Subquery)) or (expr.contains_aggregate and not expr.is_summary):\n-                # Reference to column, subquery, or another aggregate. Make\n-                # sure the expression is selected and reuse its alias if so.\n+            else:\n+                # Reuse aliases of expressions already selected in subquery.\n                 for col_alias, selected_annotation in self.annotation_select.items():\n                     if selected_annotation == expr:\n+                        new_expr = Ref(col_alias, expr)\n                         break\n                 else:\n-                    col_cnt += 1\n-                    col_alias = '__col%d' % col_cnt\n-                    self.annotations[col_alias] = expr\n-                    self.append_annotation_mask([col_alias])\n-                new_exprs.append(Ref(col_alias, expr))\n-            else:\n-                # Some other expression not referencing database values\n-                # directly. Its subexpression might contain Cols.\n-                new_expr, col_cnt = self.rewrite_cols(expr, col_cnt)\n+                    # An expression that is not selected the subquery.\n+                    if isinstance(expr, Col) or (expr.contains_aggregate and not expr.is_summary):\n+                        # Reference column or another aggregate. Select it\n+                        # under a non-conflicting alias.\n+                        col_cnt += 1\n+                        col_alias = '__col%d' % col_cnt\n+                        self.annotations[col_alias] = expr\n+                        self.append_annotation_mask([col_alias])\n+                        new_expr = Ref(col_alias, expr)\n+                    else:\n+                        # Some other expression not referencing database values\n+                        # directly. Its subexpression might contain Cols.\n+                        new_expr, col_cnt = self.rewrite_cols(expr, col_cnt)\n                 new_exprs.append(new_expr)\n         annotation.set_source_expressions(new_exprs)\n         return annotation, col_cnt"
+ },
+ {
+  "repo": "django/django",
+  "sha": "a5a2ceeb453b86caaf01687342984f372428beb8",
+  "pr": 9360,
+  "title": "Fixed #27629 -- Fixed bug where allow_relation() is never called",
+  "file": "django/db/models/fields/related_descriptors.py",
+  "patch": "@@ -205,11 +205,10 @@ def __set__(self, instance, value):\n         elif value is not None:\n             if instance._state.db is None:\n                 instance._state.db = router.db_for_write(instance.__class__, instance=value)\n-            elif value._state.db is None:\n+            if value._state.db is None:\n                 value._state.db = router.db_for_write(value.__class__, instance=instance)\n-            elif value._state.db is not None and instance._state.db is not None:\n-                if not router.allow_relation(value, instance):\n-                    raise ValueError('Cannot assign \"%r\": the current database router prevents this relation.' % value)\n+            if not router.allow_relation(value, instance):\n+                raise ValueError('Cannot assign \"%r\": the current database router prevents this relation.' % value)\n \n         remote_field = self.field.remote_field\n         # If we're setting the value of a OneToOneField to None, we need to clear\n@@ -451,11 +450,10 @@ def __set__(self, instance, value):\n         else:\n             if instance._state.db is None:\n                 instance._state.db = router.db_for_write(instance.__class__, instance=value)\n-            elif value._state.db is None:\n+            if value._state.db is None:\n                 value._state.db = router.db_for_write(value.__class__, instance=instance)\n-            elif value._state.db is not None and instance._state.db is not None:\n-                if not router.allow_relation(value, instance):\n-                    raise ValueError('Cannot assign \"%r\": the current database router prevents this relation.' % value)\n+            if not router.allow_relation(value, instance):\n+                raise ValueError('Cannot assign \"%r\": the current database router prevents this relation.' % value)\n \n             related_pk = tuple(getattr(instance, field.attname) for field in self.related.field.foreign_related_fields)\n             # Set the value of the related field to the value of the related object's related field"
+ },
+ {
+  "repo": "django/django",
+  "sha": "a5fb18c2afbbaf26b676288ed933dfe448293178",
+  "pr": 289,
+  "title": "Fixed bug in 212b982 -- Removed duplicate code in removetags",
+  "file": "django/template/defaultfilters.py",
+  "patch": "@@ -468,13 +468,8 @@ def safeseq(value):\n @stringfilter\n def removetags(value, tags):\n     \"\"\"Removes a space separated list of [X]HTML tags from the output.\"\"\"\n-    tags = [re.escape(tag) for tag in tags.split()]\n-    tags_re = '(%s)' % '|'.join(tags)\n-    starttag_re = re.compile(r'<%s(/?>|(\\s+[^>]*>))' % tags_re, re.U)\n-    endtag_re = re.compile('</%s>' % tags_re)\n-    value = starttag_re.sub('', value)\n-    value = endtag_re.sub('', value)\n-    return value\n+    from django.utils.html import remove_tags\n+    return remove_tags(value, tags)\n \n @register.filter(is_safe=True)\n @stringfilter"
+ },
+ {
+  "repo": "django/django",
+  "sha": "28a4e5923f90cce6ae86be44568f115f049ce4c4",
+  "pr": 1070,
+  "title": "Fix bug introduced in contrib.gis in 74f3884ae0",
+  "file": "django/contrib/gis/db/models/sql/compiler.py",
+  "patch": "@@ -121,7 +121,7 @@ def get_default_columns(self, with_aliases=False, col_aliases=None,\n         \"\"\"\n         result = []\n         if opts is None:\n-            opts = self.get_meta()\n+            opts = self.query.get_meta()\n         aliases = set()\n         only_load = self.deferred_to_columns()\n         seen = self.query.included_inherited_models.copy()\n@@ -247,7 +247,7 @@ def _field_column(self, field, table_alias=None, column=None):\n         used.  If `column` is specified, it will be used instead of the value\n         in `field.column`.\n         \"\"\"\n-        if table_alias is None: table_alias = self.get_meta().db_table\n+        if table_alias is None: table_alias = self.query.get_meta().db_table\n         return \"%s.%s\" % (self.quote_name_unless_alias(table_alias),\n                           self.connection.ops.quote_name(column or field.column))\n "
+ },
+ {
+  "repo": "scrapy/scrapy",
+  "sha": "afafc2781af71e0f32c79ede44be3155709dbd36",
+  "pr": 5824,
+  "title": "Fixed #5819 -- Bug of parse command",
+  "file": "scrapy/commands/parse.py",
+  "patch": "@@ -1,3 +1,4 @@\n+import inspect\n import json\n import logging\n from typing import Dict\n@@ -10,7 +11,11 @@\n from scrapy.exceptions import UsageError\n from scrapy.http import Request\n from scrapy.utils import display\n-from scrapy.utils.spider import iterate_spider_output, spidercls_for_request\n+from scrapy.utils.asyncgen import collect_asyncgen\n+from scrapy.utils.defer import aiter_errback, deferred_from_coro\n+from scrapy.utils.log import failure_to_exc_info\n+from scrapy.utils.misc import arg_to_iter\n+from scrapy.utils.spider import spidercls_for_request\n \n logger = logging.getLogger(__name__)\n \n@@ -108,6 +113,25 @@ def max_level(self):\n             max_requests = max(self.requests)\n         return max(max_items, max_requests)\n \n+    def handle_exception(self, _failure):\n+        logger.error(\n+            \"An error is caught while iterating the async iterable\",\n+            exc_info=failure_to_exc_info(_failure),\n+        )\n+\n+    def iterate_spider_output(self, result):\n+        if inspect.isasyncgen(result):\n+            d = deferred_from_coro(\n+                collect_asyncgen(aiter_errback(result, self.handle_exception))\n+            )\n+            d.addCallback(self.iterate_spider_output)\n+            return d\n+        if inspect.iscoroutine(result):\n+            d = deferred_from_coro(result)\n+            d.addCallback(self.iterate_spider_output)\n+            return d\n+        return arg_to_iter(deferred_from_coro(result))\n+\n     def add_items(self, lvl, new_items):\n         old_items = self.items.get(lvl, [])\n         self.items[lvl] = old_items + new_items\n@@ -165,7 +189,7 @@ def _get_items_and_requests(self, spider_output, opts, depth, spider, callback):\n \n     def run_callback(self, response, callback, cb_kwargs=None):\n         cb_kwargs = cb_kwargs or {}\n-        d = maybeDeferred(iterate_spider_output, callback(response, **cb_kwargs))\n+        d = maybeDeferred(self.iterate_spider_output, callback(response, **cb_kwargs))\n         return d\n \n     def get_callback_from_rules(self, spider, response):"
+ },
+ {
+  "repo": "scrapy/scrapy",
+  "sha": "5b13bfd14ac4a4d71874d6adebe4914764a63e81",
+  "pr": 5269,
+  "title": "Fix bug #5145 - Removing Selector for Response's that are not Http or Xml",
+  "file": "scrapy/loader/__init__.py",
+  "patch": "@@ -83,6 +83,9 @@ class ItemLoader(itemloaders.ItemLoader):\n \n     def __init__(self, item=None, selector=None, response=None, parent=None, **context):\n         if selector is None and response is not None:\n-            selector = self.default_selector_class(response)\n+            try:\n+                selector = self.default_selector_class(response)\n+            except AttributeError:\n+                selector = None\n         context.update(response=response)\n         super().__init__(item=item, selector=selector, parent=parent, **context)"
+ },
+ {
+  "repo": "scrapy/scrapy",
+  "sha": "6c3970e6722191b642fd99c6c1bfed0d93010cab",
+  "pr": 3153,
+  "title": "[MRG+1] Fixed bug FormRequest.from_response() clickdata ignores input[type=image]",
+  "file": "scrapy/http/request/form.py",
+  "patch": "@@ -170,9 +170,8 @@ def _get_clickable(clickdata, form):\n     \"\"\"\n     clickables = [\n         el for el in form.xpath(\n-            'descendant::*[(self::input or self::button)'\n-            ' and re:test(@type, \"^submit$\", \"i\")]'\n-            '|descendant::button[not(@type)]',\n+            'descendant::input[re:test(@type, \"^(submit|image)$\", \"i\")]'\n+            '|descendant::button[not(@type) or re:test(@type, \"^submit$\", \"i\")]',\n             namespaces={\"re\": \"http://exslt.org/regular-expressions\"})\n         ]\n     if not clickables:"
+ },
+ {
+  "repo": "scrapy/scrapy",
+  "sha": "921caa49badf0031e79c9f6818777739461e09f5",
+  "pr": 1747,
+  "title": "[MRG+1] Fix bug on XMLItemExporter with non-string fields in items",
+  "file": "scrapy/exporters.py",
+  "patch": "@@ -144,8 +144,10 @@ def _export_xml_field(self, name, serialized_value):\n         elif is_listlike(serialized_value):\n             for value in serialized_value:\n                 self._export_xml_field('value', value)\n-        else:\n+        elif isinstance(serialized_value, six.text_type):\n             self._xg_characters(serialized_value)\n+        else:\n+            self._xg_characters(str(serialized_value))\n         self.xg.endElement(name)\n \n     # Workaround for http://bugs.python.org/issue17606"
+ },
+ {
+  "repo": "scrapy/scrapy",
+  "sha": "c01b634c46c65b944d5695fe98354273e3eab04a",
+  "pr": 878,
+  "title": "Fix bug for \".local\" host name",
+  "file": "scrapy/http/cookies.py",
+  "patch": "@@ -29,7 +29,7 @@ def add_cookie_header(self, request):\n         if not IPV4_RE.search(req_host):\n             hosts = potential_domain_matches(req_host)\n             if req_host.find(\".\") == -1:\n-                hosts += req_host + \".local\"\n+                hosts += [req_host + \".local\"]\n         else:\n             hosts = [req_host]\n "
+ },
+ {
+  "repo": "psf/requests-html",
+  "sha": "bcb0881d159eb1949b77a1f935a08dbc708779ad",
+  "pr": 126,
+  "title": "Fix bugs related to links",
+  "file": "requests_html.py",
+  "patch": "@@ -294,7 +294,7 @@ def gen():\n \n                 try:\n                     href = link.attrs['href'].strip()\n-                    if href and not (href.startswith('#') and self.skip_anchors) and not href.startswith('javascript:'):\n+                    if href and not (href.startswith('#') and self.skip_anchors) and not href.startswith('javascript:') and not href.startswith('mailto:'):\n                         yield href\n                 except KeyError:\n                     pass\n@@ -343,15 +343,15 @@ def base_url(self) -> _URL:\n         # Support for <base> tag.\n         base = self.find('base', first=True)\n         if base:\n-            result = base.attrs['href'].strip()\n+            result = base.attrs.get('href', '').strip()\n             if result:\n                 return result\n \n         # Parse the url to separate out the path\n         parsed = urlparse(self.url)._asdict()\n \n         # Remove any part of the path after the last '/'\n-        path = '/'.join(parsed['path'].split('/')[:-1])\n+        parsed['path'] = '/'.join(parsed['path'].split('/')[:-1]) + '/'\n \n         # Reconstruct the url with the modified path\n         parsed = (v for v in parsed.values())"
+ },
+ {
+  "repo": "expressjs/express",
+  "sha": "0e3ab6ec215fc297473323fb1e8d0df03033e774",
+  "pr": 5414,
+  "title": "Fix favicon-related bug in cookie-sessions example",
+  "file": "examples/cookie-sessions/index.js",
+  "patch": "@@ -13,13 +13,10 @@ var app = module.exports = express();\n app.use(cookieSession({ secret: 'manny is cool' }));\n \n // do something with the session\n-app.use(count);\n-\n-// custom middleware\n-function count(req, res) {\n+app.get('/', function (req, res) {\n   req.session.count = (req.session.count || 0) + 1\n   res.send('viewed ' + req.session.count + ' times\\n')\n-}\n+})\n \n /* istanbul ignore next */\n if (!module.parent) {"
+ },
+ {
+  "repo": "expressjs/express",
+  "sha": "02f3933b6962114cf46c637105db7983d32a156a",
+  "pr": 3812,
+  "title": "fix: expression minor bugs",
+  "file": "examples/downloads/index.js",
+  "patch": "@@ -21,7 +21,7 @@ app.get('/files/:file(*)', function(req, res, next){\n \n   res.download(filePath, function (err) {\n     if (!err) return; // file sent\n-    if (err && err.status !== 404) return next(err); // non-404 error\n+    if (err.status !== 404) return next(err); // non-404 error\n     // file for download not found\n     res.statusCode = 404;\n     res.send('Cant find that file, sorry!');"
+ },
+ {
+  "repo": "axios/axios",
+  "sha": "5d99fe4491202a6268c71e5dcc09192359d73cea",
+  "pr": 6668,
+  "title": "fix(core): fixed config merging bug",
+  "file": "lib/core/mergeConfig.js",
+  "patch": "@@ -19,7 +19,7 @@ export default function mergeConfig(config1, config2) {\n   config2 = config2 || {};\n   const config = {};\n \n-  function getMergedValue(target, source, caseless) {\n+  function getMergedValue(target, source, prop, caseless) {\n     if (utils.isPlainObject(target) && utils.isPlainObject(source)) {\n       return utils.merge.call({caseless}, target, source);\n     } else if (utils.isPlainObject(source)) {\n@@ -31,11 +31,11 @@ export default function mergeConfig(config1, config2) {\n   }\n \n   // eslint-disable-next-line consistent-return\n-  function mergeDeepProperties(a, b, caseless) {\n+  function mergeDeepProperties(a, b, prop , caseless) {\n     if (!utils.isUndefined(b)) {\n-      return getMergedValue(a, b, caseless);\n+      return getMergedValue(a, b, prop , caseless);\n     } else if (!utils.isUndefined(a)) {\n-      return getMergedValue(undefined, a, caseless);\n+      return getMergedValue(undefined, a, prop , caseless);\n     }\n   }\n \n@@ -93,7 +93,7 @@ export default function mergeConfig(config1, config2) {\n     socketPath: defaultToConfig2,\n     responseEncoding: defaultToConfig2,\n     validateStatus: mergeDirectKeys,\n-    headers: (a, b) => mergeDeepProperties(headersToObject(a), headersToObject(b), true)\n+    headers: (a, b , prop) => mergeDeepProperties(headersToObject(a), headersToObject(b),prop, true)\n   };\n \n   utils.forEach(Object.keys(Object.assign({}, config1, config2)), function computeConfigValue(prop) {"
+ },
+ {
+  "repo": "axios/axios",
+  "sha": "bc03c6cbc41eb8449daa2f4b6b8048671a05bded",
+  "pr": 6575,
+  "title": "fix: disable example /get bug. 'require is not defined'",
+  "file": "examples/server.js",
+  "patch": "@@ -128,7 +128,9 @@ server = http.createServer(function (req, res) {\n   // Process server request\n   else if (new RegExp('(' + dirs.join('|') + ')\\/server').test(url)) {\n     if (fs.existsSync(path.join(__dirname, url + '.js'))) {\n-      require(path.join(__dirname, url + '.js'))(req, res);\n+      import('./' + url + '.js').then(module => {\n+        module.default(req, res)\n+      });\n     } else {\n       send404(res);\n     }"
+ },
+ {
+  "repo": "axios/axios",
+  "sha": "a3b246c9de5c3bc4b5a742e15add55b375479451",
+  "pr": 5564,
+  "title": "fix(http): fixed regression bug when handling synchronous errors inside the adapter;",
+  "file": "lib/adapters/http.js",
+  "patch": "@@ -116,26 +116,47 @@ function setProxy(options, configProxy, location) {\n \n const isHttpAdapterSupported = typeof process !== 'undefined' && utils.kindOf(process) === 'process';\n \n+// temporary hotfix\n+\n+const wrapAsync = (asyncExecutor) => {\n+  return new Promise((resolve, reject) => {\n+    let onDone;\n+    let isDone;\n+\n+    const done = (value, isRejected) => {\n+      if (isDone) return;\n+      isDone = true;\n+      onDone && onDone(value, isRejected);\n+    }\n+\n+    const _resolve = (value) => {\n+      done(value);\n+      resolve(value);\n+    };\n+\n+    const _reject = (reason) => {\n+      done(reason, true);\n+      reject(reason);\n+    }\n+\n+    asyncExecutor(_resolve, _reject, (onDoneHandler) => (onDone = onDoneHandler)).catch(_reject);\n+  })\n+};\n+\n /*eslint consistent-return:0*/\n export default isHttpAdapterSupported && function httpAdapter(config) {\n-  /*eslint no-async-promise-executor:0*/\n-  return new Promise(async function dispatchHttpRequest(resolvePromise, rejectPromise) {\n-    let data = config.data;\n-    const responseType = config.responseType;\n-    const responseEncoding = config.responseEncoding;\n+  return wrapAsync(async function dispatchHttpRequest(resolve, reject, onDone) {\n+    let {data} = config;\n+    const {responseType, responseEncoding} = config;\n     const method = config.method.toUpperCase();\n-    let isFinished;\n     let isDone;\n     let rejected = false;\n     let req;\n \n     // temporary internal emitter until the AxiosRequest class will be implemented\n     const emitter = new EventEmitter();\n \n-    function onFinished() {\n-      if (isFinished) return;\n-      isFinished = true;\n-\n+    const onFinished = () => {\n       if (config.cancelToken) {\n         config.cancelToken.unsubscribe(abort);\n       }\n@@ -147,26 +168,13 @@ export default isHttpAdapterSupported && function httpAdapter(config) {\n       emitter.removeAllListeners();\n     }\n \n-    function done(value, isRejected) {\n-      if (isDone) return;\n-\n+    onDone((value, isRejected) => {\n       isDone = true;\n-\n       if (isRejected) {\n         rejected = true;\n         onFinished();\n       }\n-\n-      isRejected ? rejectPromise(value) : resolvePromise(value);\n-    }\n-\n-    const resolve = function resolve(value) {\n-      done(value);\n-    };\n-\n-    const reject = function reject(value) {\n-      done(value, true);\n-    };\n+    });\n \n     function abort(reason) {\n       emitter.emit('abort', !reason || reason.type ? new CanceledError(null, config, req) : reason);"
+ },
+ {
+  "repo": "axios/axios",
+  "sha": "379fdebc46ede21815b7067830916eb612839e5e",
+  "pr": 4819,
+  "title": "Fixed a regression bug with unsubscribing from cancel token & signal inside http adapter;",
+  "file": "lib/adapters/xhr.js",
+  "patch": "@@ -232,11 +232,6 @@ export default function xhrAdapter(config) {\n       }\n     }\n \n-    // false, 0 (zero number), and '' (empty string) are valid JSON values\n-    if (!requestData && requestData !== false && requestData !== 0 && requestData !== '') {\n-      requestData = null;\n-    }\n-\n     const protocol = parseProtocol(fullPath);\n \n     if (protocol && platform.protocols.indexOf(protocol) === -1) {\n@@ -246,6 +241,6 @@ export default function xhrAdapter(config) {\n \n \n     // Send the request\n-    request.send(requestData);\n+    request.send(requestData || null);\n   });\n }"
+ },
+ {
+  "repo": "axios/axios",
+  "sha": "467025bdb743d0132ee236a7c935b9ac14f5408f",
+  "pr": 4728,
+  "title": "Fixed bug #4727 : toFormData Blob issue on node>v17;",
+  "file": "lib/helpers/toFormData.js",
+  "patch": "@@ -1,6 +1,7 @@\n 'use strict';\n \n var utils = require('../utils');\n+var AxiosError = require('../core/AxiosError');\n var envFormData = require('../env/classes/FormData');\n \n function isVisitable(thing) {\n@@ -20,20 +21,6 @@ function renderKey(path, key, dots) {\n   }).join(dots ? '.' : '');\n }\n \n-function convertValue(value) {\n-  if (value === null) return '';\n-\n-  if (utils.isDate(value)) {\n-    return value.toISOString();\n-  }\n-\n-  if (utils.isArrayBuffer(value) || utils.isTypedArray(value)) {\n-    return typeof Blob === 'function' ? new Blob([value]) : Buffer.from(value);\n-  }\n-\n-  return value;\n-}\n-\n function isFlatArray(arr) {\n   return utils.isArray(arr) && !arr.some(isVisitable);\n }\n@@ -42,6 +29,10 @@ var predicates = utils.toFlatObject(utils, {}, null, function filter(prop) {\n   return /^is[A-Z]/.test(prop);\n });\n \n+function isSpecCompliant(thing) {\n+  return thing && utils.isFunction(thing.append) && thing[Symbol.toStringTag] === 'FormData' && thing[Symbol.iterator];\n+}\n+\n /**\n  * Convert a data object to FormData\n  * @param {Object} obj\n@@ -73,11 +64,31 @@ function toFormData(obj, formData, options) {\n   var visitor = options.visitor || defaultVisitor;\n   var dots = options.dots;\n   var indexes = options.indexes;\n+  var _Blob = options.Blob || typeof Blob !== 'undefined' && Blob;\n+  var useBlob = _Blob && isSpecCompliant(formData);\n \n   if (!utils.isFunction(visitor)) {\n     throw new TypeError('visitor must be a function');\n   }\n \n+  function convertValue(value) {\n+    if (value === null) return '';\n+\n+    if (utils.isDate(value)) {\n+      return value.toISOString();\n+    }\n+\n+    if (!useBlob && utils.isBlob(value)) {\n+      throw new AxiosError('Blob is not supported. Use a Buffer instead.');\n+    }\n+\n+    if (utils.isArrayBuffer(value) || utils.isTypedArray(value)) {\n+      return useBlob && typeof Blob === 'function' ? new Blob([value]) : Buffer.from(value);\n+    }\n+\n+    return value;\n+  }\n+\n   /**\n    *\n    * @param {*} value"
+ },
+ {
+  "repo": "lodash/lodash",
+  "sha": "488e62bd79443dd96fd83e631cccf3f68da489b1",
+  "pr": 4319,
+  "title": "Fix stringToPath bug for consecutive []",
+  "file": ".internal/stringToPath.js",
+  "patch": "@@ -8,7 +8,7 @@ const rePropName = RegExp(\n   // Or match property names within brackets.\n   '\\\\[(?:' +\n     // Match a non-string expression.\n-    '([^\"\\'].*)' + '|' +\n+    '([^\"\\'][^[]*)' + '|' +\n     // Or match strings (supports escaping characters).\n     '([\"\\'])((?:(?!\\\\2)[^\\\\\\\\]|\\\\\\\\.)*?)\\\\2' +\n   ')\\\\]'+ '|' +"
+ },
+ {
+  "repo": "vuejs/core",
+  "sha": "4c74302aae64c118752db7fc2a2c229a11ebaead",
+  "pr": 6100,
+  "title": "fix(server-renderer): fix the bug that multi slot scope id does not work on component",
+  "file": "packages/server-renderer/src/render.ts",
+  "patch": "@@ -181,7 +181,10 @@ function renderComponentSubTree(\n \n       if (slotScopeId) {\n         if (!hasCloned) attrs = { ...attrs }\n-        attrs![slotScopeId.trim()] = ''\n+        const slotScopeIdList = slotScopeId.trim().split(' ')\n+        for (let i = 0; i < slotScopeIdList.length; i++) {\n+          attrs![slotScopeIdList[i]] = ''\n+        }\n       }\n \n       // set current rendering instance for asset resolution"
+ },
+ {
+  "repo": "gin-gonic/gin",
+  "sha": "8eb5f832bac1853fc84c508a2b9406134d39492e",
+  "pr": 3460,
+  "title": "fix(router): tree bug where loop index is not decremented.",
+  "file": "tree.go",
+  "patch": "@@ -459,9 +459,9 @@ walk: // Outer loop for walking the tree\n \t\t\t\t\t// If the path at the end of the loop is not equal to '/' and the current node has no child nodes\n \t\t\t\t\t// the current node needs to roll back to last valid skippedNode\n \t\t\t\t\tif path != \"/\" {\n-\t\t\t\t\t\tfor l := len(*skippedNodes); l > 0; {\n-\t\t\t\t\t\t\tskippedNode := (*skippedNodes)[l-1]\n-\t\t\t\t\t\t\t*skippedNodes = (*skippedNodes)[:l-1]\n+\t\t\t\t\t\tfor length := len(*skippedNodes); length > 0; length-- {\n+\t\t\t\t\t\t\tskippedNode := (*skippedNodes)[length-1]\n+\t\t\t\t\t\t\t*skippedNodes = (*skippedNodes)[:length-1]\n \t\t\t\t\t\t\tif strings.HasSuffix(skippedNode.path, path) {\n \t\t\t\t\t\t\t\tpath = skippedNode.path\n \t\t\t\t\t\t\t\tn = skippedNode.node\n@@ -576,9 +576,9 @@ walk: // Outer loop for walking the tree\n \t\t\t// If the current path does not equal '/' and the node does not have a registered handle and the most recently matched node has a child node\n \t\t\t// the current node needs to roll back to last valid skippedNode\n \t\t\tif n.handlers == nil && path != \"/\" {\n-\t\t\t\tfor l := len(*skippedNodes); l > 0; {\n-\t\t\t\t\tskippedNode := (*skippedNodes)[l-1]\n-\t\t\t\t\t*skippedNodes = (*skippedNodes)[:l-1]\n+\t\t\t\tfor length := len(*skippedNodes); length > 0; length-- {\n+\t\t\t\t\tskippedNode := (*skippedNodes)[length-1]\n+\t\t\t\t\t*skippedNodes = (*skippedNodes)[:length-1]\n \t\t\t\t\tif strings.HasSuffix(skippedNode.path, path) {\n \t\t\t\t\t\tpath = skippedNode.path\n \t\t\t\t\t\tn = skippedNode.node\n@@ -633,9 +633,9 @@ walk: // Outer loop for walking the tree\n \n \t\t// roll back to last valid skippedNode\n \t\tif !value.tsr && path != \"/\" {\n-\t\t\tfor l := len(*skippedNodes); l > 0; {\n-\t\t\t\tskippedNode := (*skippedNodes)[l-1]\n-\t\t\t\t*skippedNodes = (*skippedNodes)[:l-1]\n+\t\t\tfor length := len(*skippedNodes); length > 0; length-- {\n+\t\t\t\tskippedNode := (*skippedNodes)[length-1]\n+\t\t\t\t*skippedNodes = (*skippedNodes)[:length-1]\n \t\t\t\tif strings.HasSuffix(skippedNode.path, path) {\n \t\t\t\t\tpath = skippedNode.path\n \t\t\t\t\tn = skippedNode.node"
+ },
+ {
+  "repo": "gin-gonic/gin",
+  "sha": "8790d08909fc4d193c6c787c9c72f3089168f411",
+  "pr": 3236,
+  "title": "fix(uri): query binding bug",
+  "file": "binding/query.go",
+  "patch": "@@ -12,9 +12,9 @@ func (queryBinding) Name() string {\n \treturn \"query\"\n }\n \n-func (queryBinding) Bind(req *http.Request, obj any) error {\n+func (q queryBinding) Bind(req *http.Request, obj any) error {\n \tvalues := req.URL.Query()\n-\tif err := mapForm(obj, values); err != nil {\n+\tif err := mapFormByTag(obj, values, q.Name()); err != nil {\n \t\treturn err\n \t}\n \treturn validate(obj)"
+ },
+ {
+  "repo": "gin-gonic/gin",
+  "sha": "d4e413648824333726ef65de5defc457e9dbf095",
+  "pr": 3899,
+  "title": "Revert \"fix(uri): query binding bug\"",
+  "file": "binding/query.go",
+  "patch": "@@ -12,9 +12,9 @@ func (queryBinding) Name() string {\n \treturn \"query\"\n }\n \n-func (q queryBinding) Bind(req *http.Request, obj any) error {\n+func (queryBinding) Bind(req *http.Request, obj any) error {\n \tvalues := req.URL.Query()\n-\tif err := mapFormByTag(obj, values, q.Name()); err != nil {\n+\tif err := mapForm(obj, values); err != nil {\n \t\treturn err\n \t}\n \treturn validate(obj)"
+ },
+ {
+  "repo": "gin-gonic/gin",
+  "sha": "8b9c55e8b059a1ffcc69e3b5dc0b9d583958811f",
+  "pr": 3227,
+  "title": "fix(route): redirectSlash bug",
+  "file": "tree.go",
+  "patch": "@@ -107,7 +107,8 @@ func countSections(path string) uint16 {\n type nodeType uint8\n \n const (\n-\troot nodeType = iota + 1\n+\tstatic nodeType = iota\n+\troot\n \tparam\n \tcatchAll\n )\n@@ -173,6 +174,7 @@ walk:\n \t\t\tchild := node{\n \t\t\t\tpath:      n.path[i:],\n \t\t\t\twildChild: n.wildChild,\n+\t\t\t\tnType:     static,\n \t\t\t\tindices:   n.indices,\n \t\t\t\tchildren:  n.children,\n \t\t\t\thandlers:  n.handlers,\n@@ -604,6 +606,11 @@ walk: // Outer loop for walking the tree\n \t\t\t\treturn\n \t\t\t}\n \n+\t\t\tif path == \"/\" && n.nType == static {\n+\t\t\t\tvalue.tsr = true\n+\t\t\t\treturn\n+\t\t\t}\n+\n \t\t\t// No handle found. Check if a handle for this path + a\n \t\t\t// trailing slash exists for trailing slash recommendation\n \t\t\tfor i, c := range []byte(n.indices) {"
+ },
+ {
+  "repo": "gin-gonic/gin",
+  "sha": "98c7ac7202ffc7cfb60706bb48e0ef10f737abb1",
+  "pr": 1682,
+  "title": "fix bug",
+  "file": "routergroup.go",
+  "patch": "@@ -187,8 +187,11 @@ func (group *RouterGroup) createStaticHandler(relativePath string, fs http.FileS\n \tfileServer := http.StripPrefix(absolutePath, http.FileServer(fs))\n \n \treturn func(c *Context) {\n-\t\tfile := c.Param(\"filepath\")\n+\t\tif _, nolisting := fs.(*onlyfilesFS); nolisting {\n+\t\t\tc.Writer.WriteHeader(http.StatusNotFound)\n+\t\t}\n \n+\t\tfile := c.Param(\"filepath\")\n \t\t// Check if file exists and/or if we have permission to access it\n \t\tif _, err := fs.Open(file); err != nil {\n \t\t\tc.Writer.WriteHeader(http.StatusNotFound)"
+ },
+ {
+  "repo": "spf13/cobra",
+  "sha": "19c9c7438498bf4ba07506b4eaa76670cd37ae2d",
+  "pr": 1557,
+  "title": "Bug fix: includes `os` package import in root command generation",
+  "file": "cobra/tpl/main.go",
+  "patch": "@@ -37,9 +37,9 @@ package cmd\n \n import (\n {{- if .Viper }}\n-\t\"fmt\"\n+\t\"fmt\"{{ end }}\n \t\"os\"\n-{{ end }}\n+\n \t\"github.com/spf13/cobra\"\n {{- if .Viper }}\n \t\"github.com/spf13/viper\"{{ end }}"
+ },
+ {
+  "repo": "spf13/cobra",
+  "sha": "a28055bed2dff1bff270a5f5c1a5a7dd97311a77",
+  "pr": 446,
+  "title": "Fix minor bugs in init command",
+  "file": "cobra/cmd/init.go",
+  "patch": "@@ -197,13 +197,13 @@ func initConfig() {\n \t\t// Find home directory.\n \t\thome, err := homedir.Dir()\n \t\tif err != nil {\n-\t\t\tfmt.Println(home)\n+\t\t\tfmt.Println(err)\n \t\t\tos.Exit(1)\n \t\t}\n \n-\t\t// Search config in home directory with name \".cobra\" (without extension).\n+\t\t// Search config in home directory with name \".{{ .appName }}\" (without extension).\n \t\tviper.AddConfigPath(home)\n-\t\tviper.SetConfigName(\".cobra\")\n+\t\tviper.SetConfigName(\".{{ .appName }}\")\n \t}\n \n \tviper.AutomaticEnv() // read in environment variables that match"
+ },
+ {
+  "repo": "spf13/cobra",
+  "sha": "ee150b4fa235f90bd58abe1fc0d1dcef7e390356",
+  "pr": 258,
+  "title": "Update root.go to fix golint bug with comment",
+  "file": "cobra/cmd/root.go",
+  "patch": "@@ -24,7 +24,7 @@ import (\n var cfgFile string\n var userLicense string\n \n-// This represents the base command when called without any subcommands\n+// RootCmd represents the base command when called without any subcommands\n var RootCmd = &cobra.Command{\n \tUse:   \"cobra\",\n \tShort: \"A generator for Cobra based Applications\","
+ },
+ {
+  "repo": "spf13/viper",
+  "sha": "f7363633d1c17fd98cd70783fabc133c41d3f40e",
+  "pr": 1585,
+  "title": "fix isPathShadowedInFlatMap type cast bug",
+  "file": "viper.go",
+  "patch": "@@ -827,10 +827,12 @@ func (v *Viper) isPathShadowedInDeepMap(path []string, m map[string]any) string\n //\t\"foo.bar.baz\" in a lower-priority map\n func (v *Viper) isPathShadowedInFlatMap(path []string, mi any) string {\n \t// unify input map\n-\tvar m map[string]any\n-\tswitch mi.(type) {\n-\tcase map[string]string, map[string]FlagValue:\n-\t\tm = cast.ToStringMap(mi)\n+\tvar m map[string]interface{}\n+\tswitch miv := mi.(type) {\n+\tcase map[string]string:\n+\t\tm = castMapStringToMapInterface(miv)\n+\tcase map[string]FlagValue:\n+\t\tm = castMapFlagToMapInterface(miv)\n \tdefault:\n \t\treturn \"\"\n \t}"
+ },
+ {
+  "repo": "spf13/viper",
+  "sha": "c6ee9808ab8547ad8021467022fbc955d750a7ea",
+  "pr": 868,
+  "title": "fix bug while saving ini file",
+  "file": "viper.go",
+  "patch": "@@ -1621,7 +1621,7 @@ func (v *Viper) marshalWriter(f afero.File, configType string) error {\n \t\t\tif sectionName == \"default\" {\n \t\t\t\tsectionName = \"\"\n \t\t\t}\n-\t\t\tcfg.Section(sectionName).Key(keyName).SetValue(Get(key).(string))\n+\t\t\tcfg.Section(sectionName).Key(keyName).SetValue(v.Get(key).(string))\n \t\t}\n \t\tcfg.WriteTo(f)\n \t}"
+ },
+ {
+  "repo": "labstack/echo",
+  "sha": "124825ee629f32aade886f1aeb76e0c6f70c7faa",
+  "pr": 2007,
+  "title": "Bugfix/1834 Fix X-Real-IP bug",
+  "file": "echo.go",
+  "patch": "@@ -214,9 +214,9 @@ const (\n \tHeaderXForwardedSsl       = \"X-Forwarded-Ssl\"\n \tHeaderXUrlScheme          = \"X-Url-Scheme\"\n \tHeaderXHTTPMethodOverride = \"X-HTTP-Method-Override\"\n-\tHeaderXRealIP             = \"X-Real-IP\"\n-\tHeaderXRequestID          = \"X-Request-ID\"\n-\tHeaderXCorrelationID      = \"X-Correlation-ID\"\n+\tHeaderXRealIP             = \"X-Real-Ip\"\n+\tHeaderXRequestID          = \"X-Request-Id\"\n+\tHeaderXCorrelationID      = \"X-Correlation-Id\"\n \tHeaderXRequestedWith      = \"X-Requested-With\"\n \tHeaderServer              = \"Server\"\n \tHeaderOrigin              = \"Origin\""
+ },
+ {
+  "repo": "labstack/echo",
+  "sha": "5793765eedc2207d2a777ae23be11b2f3ba862f2",
+  "pr": 1467,
+  "title": "Fix param value bug",
+  "file": "echo.go",
+  "patch": "@@ -227,7 +227,7 @@ const (\n \n const (\n \t// Version of Echo\n-\tVersion = \"4.1.11\"\n+\tVersion = \"4.1.13\"\n \twebsite = \"https://echo.labstack.com\"\n \t// http://patorjk.com/software/taag/#p=display&f=Small%20Slant&t=Echo\n \tbanner = `"
+ },
+ {
+  "repo": "labstack/echo",
+  "sha": "88965757af989d8a23419d192b418670e7cba67c",
+  "pr": 1275,
+  "title": "Simplify code of Add/Remove trailing slash and fix bug",
+  "file": "middleware/slash.go",
+  "patch": "@@ -1,6 +1,8 @@\n package middleware\n \n import (\n+\t\"strings\"\n+\n \t\"github.com/labstack/echo/v4\"\n )\n \n@@ -49,7 +51,7 @@ func AddTrailingSlashWithConfig(config TrailingSlashConfig) echo.MiddlewareFunc\n \t\t\turl := req.URL\n \t\t\tpath := url.Path\n \t\t\tqs := c.QueryString()\n-\t\t\tif path != \"/\" && path[len(path)-1] != '/' {\n+\t\t\tif !strings.HasSuffix(path, \"/\") {\n \t\t\t\tpath += \"/\"\n \t\t\t\turi := path\n \t\t\t\tif qs != \"\" {\n@@ -97,7 +99,7 @@ func RemoveTrailingSlashWithConfig(config TrailingSlashConfig) echo.MiddlewareFu\n \t\t\tpath := url.Path\n \t\t\tqs := c.QueryString()\n \t\t\tl := len(path) - 1\n-\t\t\tif l >= 0 && path != \"/\" && path[l] == '/' {\n+\t\t\tif l > 0 && strings.HasSuffix(path, \"/\") {\n \t\t\t\tpath = path[:l]\n \t\t\t\turi := path\n \t\t\t\tif qs != \"\" {"
+ },
+ {
+  "repo": "labstack/echo",
+  "sha": "f0e3f950cf7be23a481bdd75f3fb2c5c597845fd",
+  "pr": 894,
+  "title": "Tested and fixed bug with reused context (path parameters).",
+  "file": "router.go",
+  "patch": "@@ -296,18 +296,18 @@ func (n *node) checkMethodNotAllowed() HandlerFunc {\n // - Get context from `Echo#AcquireContext()`\n // - Reset it `Context#Reset()`\n // - Return it `Echo#ReleaseContext()`.\n-func (r *Router) Find(method, path string, context Context) {\n-\tcontext.SetPath(path)\n+func (r *Router) Find(method, path string, ctx Context) {\n+\tctx.SetPath(path)\n \tcn := r.tree // Current node as root\n \n \tvar (\n \t\tsearch  = path\n-\t\tc       *node  // Child node\n-\t\tn       int    // Param counter\n-\t\tnk      kind   // Next kind\n-\t\tnn      *node  // Next node\n-\t\tns      string // Next search\n-\t\tpvalues = context.ParamValues()\n+\t\tc       *node                    // Child node\n+\t\tn       int                      // Param counter\n+\t\tnk      kind                     // Next kind\n+\t\tnn      *node                    // Next node\n+\t\tns      string                   // Next search\n+\t\tpvalues = ctx.(*context).pvalues // use the internal slice so the interface can keep the illusion of a dynamic slice\n \t)\n \n \t// Search order static > param > any\n@@ -409,26 +409,26 @@ func (r *Router) Find(method, path string, context Context) {\n \t}\n \n End:\n-\tcontext.SetHandler(cn.findHandler(method))\n-\tcontext.SetPath(cn.ppath)\n-\tcontext.SetParamNames(cn.pnames...)\n+\tctx.SetHandler(cn.findHandler(method))\n+\tctx.SetPath(cn.ppath)\n+\tctx.SetParamNames(cn.pnames...)\n \n \t// NOTE: Slow zone...\n-\tif context.Handler() == nil {\n-\t\tcontext.SetHandler(cn.checkMethodNotAllowed())\n+\tif ctx.Handler() == nil {\n+\t\tctx.SetHandler(cn.checkMethodNotAllowed())\n \n \t\t// Dig further for any, might have an empty value for *, e.g.\n \t\t// serving a directory. Issue #207.\n \t\tif cn = cn.findChildByKind(akind); cn == nil {\n \t\t\treturn\n \t\t}\n \t\tif h := cn.findHandler(method); h != nil {\n-\t\t\tcontext.SetHandler(h)\n+\t\t\tctx.SetHandler(h)\n \t\t} else {\n-\t\t\tcontext.SetHandler(cn.checkMethodNotAllowed())\n+\t\t\tctx.SetHandler(cn.checkMethodNotAllowed())\n \t\t}\n-\t\tcontext.SetPath(cn.ppath)\n-\t\tcontext.SetParamNames(cn.pnames...)\n+\t\tctx.SetPath(cn.ppath)\n+\t\tctx.SetParamNames(cn.pnames...)\n \t\tpvalues[len(cn.pnames)-1] = \"\"\n \t}\n "
+ },
+ {
+  "repo": "labstack/echo",
+  "sha": "8686b3c5c7a5a2a90917a5be0d9facc24da3ddb3",
+  "pr": 642,
+  "title": "bug fix static files in routing group",
+  "file": "group.go",
+  "patch": "@@ -137,14 +137,14 @@ func (g *Group) Group(prefix string, middleware ...MiddlewareFunc) *Group {\n \n // Static implements `Echo#Static()` for sub-routes within the Group.\n func (g *Group) Static(prefix, root string) {\n-\tg.GET(g.prefix+prefix+\"*\", func(c Context) error {\n+\tg.GET(prefix+\"*\", func(c Context) error {\n \t\treturn c.File(path.Join(root, c.P(0)))\n \t})\n }\n \n // File implements `Echo#File()` for sub-routes within the Group.\n func (g *Group) File(path, file string) {\n-\tg.GET(g.prefix+path, func(c Context) error {\n+\tg.GET(path, func(c Context) error {\n \t\treturn c.File(file)\n \t})\n }"
+ }
+]

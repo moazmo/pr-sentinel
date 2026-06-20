@@ -1,0 +1,98 @@
+# Real-PR benchmark eval — MANUAL ONLY (it spends your LLM API budget).
+#
+# Runs evals/realpr.py on the frozen 60-PR snapshot (evals/realpr_snapshot.json) on a GitHub
+# runner — which, unlike a sleeping laptop, never pauses mid-run, so multi-run means are
+# reliable. This is the lower-variance "ruler" that confirms accuracy levers (e.g. Lever A,
+# D46) before any default flip, and the home of the future release-gate eval (ROADMAP).
+#
+# Setup: add an Actions secret PR_SENTINEL_API_KEY (a DeepSeek key by default). Then run it
+# from the Actions tab → "Real-PR eval (manual)" → Run workflow.
+#
+# NEVER make this run on push/PR — it hits a real LLM and costs money per run.
+name: Real-PR eval (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Recall runs to average (separates signal from flash variance)"
+        default: "3"
+      compare:
+        description: "A/B: run baseline AND +signals (Lever A confirmation)"
+        type: boolean
+        default: true
+      min_support:
+        description: "min_support (2 = default vote; 1 = thorough/max-recall)"
+        default: "2"
+      limit:
+        description: "First N PRs (0 = all 60; use a small N for a cheap smoke run)"
+        default: "0"
+      model:
+        description: "Model id"
+        default: "deepseek-v4-flash"
+      base_url:
+        description: "Provider base URL"
+        default: "https://api.deepseek.com/v1"
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PR_SENTINEL_API_KEY: ${{ secrets.PR_SENTINEL_API_KEY }}
+      PR_SENTINEL_BASE_URL: ${{ inputs.base_url }}
+      PR_SENTINEL_MODEL: ${{ inputs.model }}
+      PR_SENTINEL_MIN_SUPPORT: ${{ inputs.min_support }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: Guard — key must be set
+        run: |
+          if [ -z "$PR_SENTINEL_API_KEY" ]; then
+            echo "::error::PR_SENTINEL_API_KEY secret is not set in this repo." && exit 1
+          fi
+
+      - name: Run benchmark (A/B if requested)
+        run: |
+          LIMIT=""
+          [ "${{ inputs.limit }}" != "0" ] && LIMIT="--limit ${{ inputs.limit }}"
+          {
+            echo "## Real-PR benchmark — \`${{ inputs.model }}\`, ${{ inputs.runs }} run(s), min_support=${{ inputs.min_support }}"
+            echo ""
+            echo "### Baseline (signals off)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          PR_SENTINEL_SIGNALS=off python evals/realpr.py --precision --runs ${{ inputs.runs }} $LIMIT \
+            2>&1 | tee base.out | grep -E "Recall on real|per-PR|Precision proxy" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ inputs.compare }}" = "true" ]; then
+            {
+              echo "### + Structured signals (Lever A)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            PR_SENTINEL_SIGNALS=on python evals/realpr.py --precision --runs ${{ inputs.runs }} $LIMIT \
+              2>&1 | tee signals.out | grep -E "Recall on real|per-PR|Precision proxy" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: realpr-eval-logs
+          path: |
+            base.out
+            signals.out
+            evals/_matrix.log
+          if-no-files-found: ignore

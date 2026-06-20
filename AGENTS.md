@@ -37,7 +37,7 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch); accuracy/output blocks |
 | `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0; `@pr-sentinel` command dispatch (author-association gated) |
 | `tests/` | 256 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config; `test_research_levers.py` pins the v2.5 lever wiring. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
-| `evals/` | 37 fixtures (7 languages, hard negatives, 2 injection vectors, misleading-title `mt_*` debias probes); `run.py` env-driven leaderboard runner (per-lever knobs, fail-fast timeouts, durable `_matrix.log`) |
+| `evals/` | 37 fixtures (7 languages, hard negatives, 2 injection vectors, misleading-title `mt_*` debias probes); `run.py` env-driven leaderboard runner (per-lever knobs, fail-fast timeouts, durable `_matrix.log`); `realpr.py` real-PR recall+precision on the **frozen 60-PR snapshot** `realpr_snapshot.json` (env knobs `PR_SENTINEL_{SAMPLES,MIN_SUPPORT,ADAPTIVE,VERIFIER_ASPECTS,SIGNALS,REASONING_EFFORT}`, `--judge`, `--limit`); `sast_probe.py`, `agentic_probe{,2}.py`. CI eval = `.github/workflows/realpr-eval.yml` (manual, reliable multi-run, A/B). Run long evals with a keep-awake on Windows (modern-standby kills them). |
 
 ## Invariants — never break these
 

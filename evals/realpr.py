@@ -48,6 +48,10 @@ DEFAULT_REPOS = [
 ]
 SOURCE_EXT = {".py", ".js", ".ts", ".go", ".java", ".rb", ".rs", ".c", ".cpp", ".cs"}
 CACHE = Path(__file__).parent / "_realpr_cache.json"
+# Frozen, committed 60-PR manifest — the reproducible "ruler" the CI eval and any A/B run
+# share, so results are comparable across runs/levers and don't drift with live GitHub search.
+# Patches are embedded, so scoring needs no network. `--refresh` rebuilds from live discovery.
+SNAPSHOT = Path(__file__).parent / "realpr_snapshot.json"
 _HUNK = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)")
 
 
@@ -214,7 +218,9 @@ async def main() -> int:
     token = os.environ.get("GITHUB_TOKEN", "")
     per_repo = int(sys.argv[sys.argv.index("--per-repo") + 1]) if "--per-repo" in sys.argv else 3
 
-    if CACHE.exists() and "--refresh" not in sys.argv:
+    if SNAPSHOT.exists() and "--refresh" not in sys.argv:
+        manifest = json.loads(SNAPSHOT.read_text(encoding="utf-8"))  # frozen, reproducible ruler
+    elif CACHE.exists() and "--refresh" not in sys.argv:
         manifest = json.loads(CACHE.read_text(encoding="utf-8"))
     else:
         manifest = discover(DEFAULT_REPOS, per_repo, token)
