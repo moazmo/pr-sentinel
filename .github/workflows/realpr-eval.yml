@@ -40,7 +40,7 @@ permissions:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 340   # a full 3-run × 60-PR A/B is ~3.5h; public-repo CI minutes are free
     env:
       PR_SENTINEL_API_KEY: ${{ secrets.PR_SENTINEL_API_KEY }}
       PR_SENTINEL_BASE_URL: ${{ inputs.base_url }}
