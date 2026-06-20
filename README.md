@@ -134,7 +134,7 @@ accuracy:
   analyst_thinking: null      # null = provider default (DeepSeek = on); false/true to force
   reasoning_effort: ""        # "" | low | medium | high (depth when thinking is on)
   repo_context: false         # prefetch cross-file symbol definitions for context (Python/JS/TS/Go, opt-in, live-path)
-  structured_signals: false   # compact diff-derived <impact> card (removed guards + contract changes); promising frontier-push (F1 31→45 on a 1-run real-PR slice) but unconfirmed at scale — on in thorough (D46)
+  structured_signals: false   # compact diff-derived <impact> card (removed guards + contract changes). Measured NEUTRAL/NEGATIVE on the reliable 3-run benchmark (F1 45 vs 53 baseline) — off everywhere; kept as infra (D46)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"

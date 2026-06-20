@@ -245,7 +245,8 @@ class SentinelConfig(BaseModel):
             self.accuracy.calibration = True
             self.accuracy.lenses = True
             self.accuracy.cot = "brief"
-            self.accuracy.structured_signals = True  # Lever A (D46): compact diff-derived facts
+            # structured_signals deliberately NOT enabled: the reliable 3-run CI A/B showed it
+            # neutral-to-negative (F1 45 vs 53 baseline), so it's off everywhere (D46).
         # "balanced" / "" keep the defaults (samples=3, verifier on, research
         # levers off — measured ≈ baseline on flash, so off by default; D29).
 
