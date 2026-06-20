@@ -169,6 +169,43 @@ def _reverted_lines(reversed_patch: str) -> set[int]:
     return added_line_numbers(reversed_patch)
 
 
+_JUDGE_SYS = (
+    "You decide whether a code reviewer found a SPECIFIC bug. The reviewer saw a diff whose "
+    "'+' lines reintroduce a defect that was previously fixed. Given the reviewer's findings and "
+    "the known fix, answer whether any finding identifies THIS defect — its root cause or its "
+    "direct effect — regardless of the exact line number cited. Answer ONLY 'YES' or 'NO'."
+)
+
+
+async def judge_catch(provider, model: str, entry: dict, findings) -> tuple[bool, int, int]:
+    """Semantic LLM-judge scorer (opt-in `--judge`): credits a context-aware finding that points
+    at the real bug even when it cites a caller/related line, not the exact reverted line — the
+    line-overlap under-credit every research pass flagged. Returns (caught, prompt_tok, compl_tok)."""
+    if not findings:
+        return False, 0, 0
+    rev = reverse_patch(entry["patch"])
+    fnd = "\n".join(
+        f"- {f.file}:{f.line_start} [{f.severity.value}] {f.message[:200]}" for f in findings[:12]
+    )
+    user = (
+        f"BUGGY CHANGE (the '+' lines reintroduce the defect):\n<diff>\n{rev[:4000]}\n</diff>\n\n"
+        f"The previously-merged FIX was the reverse of this diff (so the '-' lines here are the "
+        f"correct code the change removed).\n\nREVIEWER FINDINGS:\n{fnd or '(none)'}\n\n"
+        f"Did the reviewer identify THIS reintroduced defect (root cause or direct effect), "
+        f"regardless of exact line? Answer YES or NO."
+    )
+    try:
+        from pr_sentinel.provider import ProviderError
+        # thinking=False: a YES/NO classification needs no reasoning tokens, and leaving
+        # DeepSeek thinking on with a tiny max_tokens budget starves `content` (the 0/60 bug).
+        r = await provider.complete(_JUDGE_SYS, user, max_tokens=16, temperature=0.0,
+                                    model=model, thinking=False)
+    except (ProviderError, Exception):  # noqa: BLE001 — judge is best-effort
+        return False, 0, 0
+    caught = r.text.strip().upper().startswith("YES")
+    return caught, r.prompt_tokens, r.completion_tokens
+
+
 async def main() -> int:
     api_key = os.environ.get("PR_SENTINEL_API_KEY", "")
     if not api_key:
@@ -182,6 +219,8 @@ async def main() -> int:
     else:
         manifest = discover(DEFAULT_REPOS, per_repo, token)
         CACHE.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    if "--limit" in sys.argv:
+        manifest = manifest[: max(1, int(sys.argv[sys.argv.index("--limit") + 1]))]
     print(f"{len(manifest)} real bug-fix PRs in the benchmark.")
 
     base_url = os.environ.get("PR_SENTINEL_BASE_URL", "https://api.deepseek.com/v1")
@@ -193,6 +232,14 @@ async def main() -> int:
     config.provider.base_url = base_url
     config.review.context_lines = 0
     config.output.inline = False
+    # Sampling knobs as pure env (for the confident-wrong vs uncertain diagnostic:
+    # samples=5 min_support=1 adaptive=off measures "union of N samples" recall — the
+    # ceiling aggregation could reach — vs the voted ensemble baseline).
+    config.accuracy.samples = int(os.environ.get("PR_SENTINEL_SAMPLES", config.accuracy.samples))
+    config.accuracy.min_support = int(
+        os.environ.get("PR_SENTINEL_MIN_SUPPORT", config.accuracy.min_support))
+    if os.environ.get("PR_SENTINEL_ADAPTIVE", "").lower() in ("off", "false", "0"):
+        config.accuracy.adaptive = False
     # Lever 4: reasoning controls as pure env, mirroring evals/run.py — so the
     # reasoning_effort A/B on real PRs needs no code change.
     config.accuracy.reasoning_effort = os.environ.get(
@@ -235,6 +282,8 @@ async def main() -> int:
     tag = " +repo_context" if want_ctx else ""
     if config.accuracy.reasoning_effort:
         tag += f" +effort={config.accuracy.reasoning_effort}"
+    if config.accuracy.samples != 3 or config.accuracy.min_support != 2:
+        tag += f" +samples={config.accuracy.samples}/ms={config.accuracy.min_support}"
 
     # Context is deterministic per (repo, sha) — fetch once, reuse across runs.
     ctx_cache: dict[int, str] = {}
@@ -244,7 +293,9 @@ async def main() -> int:
             ctx_cache[e["pr"]] = await gather_context(buggy_files(e), _make_fetch(e["repo"], e["sha"]))
 
     from datetime import date
-    total_caught = 0
+    want_judge = "--judge" in sys.argv
+    review_model = config.provider.resolved_review_model
+    total_caught = judge_caught = 0
     total_in = total_out = 0
     per_pr_hits: dict[int, int] = {e["pr"]: 0 for e in manifest}
     for run_i in range(1, runs + 1):
@@ -269,8 +320,15 @@ async def main() -> int:
                       for f in findings)
             run_caught += hit
             per_pr_hits[e["pr"]] += hit
+            jhit = False
+            if want_judge and run_i == 1:
+                jhit, jp, jc = await judge_catch(provider, review_model, e, findings)
+                total_in += jp
+                total_out += jc
+                judge_caught += jhit
             if runs == 1:
-                print(f"[{'CAUGHT' if hit else 'missed'}] {e['repo']}#{e['pr']} {e['file']} — {e['title'][:60]}")
+                jtag = f" · judge:{'YES' if jhit else 'no'}" if want_judge else ""
+                print(f"[{'CAUGHT' if hit else 'missed'}] {e['repo']}#{e['pr']} {e['file']} — {e['title'][:55]}{jtag}")
         total_caught += run_caught
         try:
             with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
@@ -314,6 +372,16 @@ async def main() -> int:
     consistent = sum(1 for v in per_pr_hits.values() if v == runs)
     flaky = sum(1 for v in per_pr_hits.values() if 0 < v < runs)
     print(f"per-PR: {consistent} caught every run, {flaky} flaky (caught some runs)")
+    if want_judge:
+        n = len(manifest) or 1
+        jline = (f"Semantic-judge recall{tag}: {judge_caught}/{n} ({100*judge_caught//n}%) "
+                 f"vs line-overlap {per_pr_hits and sum(1 for v in per_pr_hits.values() if v > 0)}/{n} (run1)")
+        print(jline)
+        try:
+            with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
+                fh.write(f"{date.today().isoformat()} [realpr judge{tag}] {jline}\n")
+        except OSError:
+            pass
     try:
         with open(Path(__file__).parent / "_matrix.log", "a", encoding="utf-8") as fh:
             fh.write(f"{date.today().isoformat()} [realpr{tag}] {line} | consistent={consistent} flaky={flaky}\n")
