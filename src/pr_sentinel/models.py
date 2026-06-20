@@ -171,6 +171,7 @@ class ReviewState(TypedDict, total=False):
     files: list[ChangedFile]
     pr_map: str
     repo_context: str  # V2.6 L3: prefetched cross-file definitions (data, bounded)
+    signals: str  # Lever A (D46): compact structured-signal <impact> card (diff-derived, bounded)
     chunks: list[object]  # list[Chunk]
     findings: Annotated[list[Finding], operator.add]
     merged_findings: list[Finding]

@@ -242,6 +242,8 @@ async def main() -> int:
         config.accuracy.adaptive = False
     config.accuracy.verifier_aspects = int(
         os.environ.get("PR_SENTINEL_VERIFIER_ASPECTS", config.accuracy.verifier_aspects))
+    if os.environ.get("PR_SENTINEL_SIGNALS", "").lower() in ("on", "true", "1"):
+        config.accuracy.structured_signals = True
     # Lever 4: reasoning controls as pure env, mirroring evals/run.py — so the
     # reasoning_effort A/B on real PRs needs no code change.
     config.accuracy.reasoning_effort = os.environ.get(
@@ -288,6 +290,8 @@ async def main() -> int:
         tag += f" +samples={config.accuracy.samples}/ms={config.accuracy.min_support}"
     if config.accuracy.verifier_aspects != 1:
         tag += f" +mav={config.accuracy.verifier_aspects}"
+    if config.accuracy.structured_signals:
+        tag += " +signals"
 
     # Context is deterministic per (repo, sha) — fetch once, reuse across runs.
     ctx_cache: dict[int, str] = {}

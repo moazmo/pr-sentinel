@@ -60,7 +60,7 @@ def scrub_secrets(text: str, known_secrets: list[str] | None = None) -> str:
 
 
 _TAG_BREAKER = re.compile(
-    r"</?\s*(diff|pr_title|pr_description|file|repo_context)\b[^>]*>", re.IGNORECASE
+    r"</?\s*(diff|pr_title|pr_description|file|repo_context|impact)\b[^>]*>", re.IGNORECASE
 )
 
 

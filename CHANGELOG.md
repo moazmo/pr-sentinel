@@ -13,6 +13,7 @@ All notable changes to PR Sentinel. Format loosely follows [Keep a Changelog](ht
 - `evals/agentic_probe2.py`: the *proper* agentic loop (def-only `fetch_definition`, RepoAudit hypothesize→confirm→validate, `reasoning_effort=high`) with a directly-comparable diff-only control.
 
 ### Added
+- **Compact structured signals** (`accuracy.structured_signals`, default off; on in `mode: thorough`): a small diff-derived `<impact>` card (removed guards/checks + changed function signatures) injected as an attention director — the "compression beats expansion" lever (Lever A, D46). Measured a Pareto improvement on a 1-run real-PR slice (F1 31→45, recall and precision both up) — the most promising lever in the program — but unconfirmed at scale (high flash run-to-run variance), so opt-in until a multi-run confirmation; $0, diff-only, injection-hardened.
 - **MAV verifier** (`accuracy.verifier_aspects`, default 1): optional multi-angle verification (grounding/skeptic/impact rubrics, any-reject combine) — a precision-recall dial. Measured a slider, not a frontier-push (D45), so off by default.
 - **`mode: thorough` is now max-recall:** sets `min_support=1` (keep every sample's findings, let the verifier filter) — measured **+~17pp recall / +12pp F1** on real PRs vs the voted default, at a higher false-positive rate (D45). The FP-averse default (`min_support=2`) is unchanged.
 

@@ -111,6 +111,8 @@ def config_from_env() -> SentinelConfig:
     config.accuracy.debias = _flag("PR_SENTINEL_DEBIAS", config.accuracy.debias)
     config.accuracy.calibration = _flag("PR_SENTINEL_CALIBRATION", config.accuracy.calibration)
     config.accuracy.lenses = _flag("PR_SENTINEL_LENSES", config.accuracy.lenses)
+    config.accuracy.structured_signals = _flag(
+        "PR_SENTINEL_SIGNALS", config.accuracy.structured_signals)
     config.accuracy.cot = os.environ.get("PR_SENTINEL_COT", config.accuracy.cot)
     # Reasoning controls (DeepSeek V4). PR_SENTINEL_ANALYST_THINKING: on|off|<unset>
     # (unset = provider default = thinking on for flash); PR_SENTINEL_REASONING_EFFORT:

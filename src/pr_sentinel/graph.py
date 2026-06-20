@@ -176,7 +176,16 @@ def build_graph(
 
             repo_context = await gather_context(files, _fetch)
 
-        return {"files": files, "chunks": chunks, "pr_map": pr_map, "repo_context": repo_context}
+        # Lever A (D46): compact structured-signal card — diff-derived, so it works on the
+        # live path AND the static benchmark (no fetch). A preset value is preserved.
+        signals = state.get("signals", "")
+        if config.accuracy.structured_signals and not signals:
+            from .signals import build_signals
+
+            signals = build_signals([f for f in files if not f.skipped])
+
+        return {"files": files, "chunks": chunks, "pr_map": pr_map,
+                "repo_context": repo_context, "signals": signals}
 
     def make_analyst_node(agent: AgentName):
         async def analyst(state: ReviewState) -> dict:
@@ -186,6 +195,7 @@ def build_graph(
             findings, usage, error = await run_analyst(
                 agent, provider, state["pr_map"], state["chunks"], config,
                 repo_context=state.get("repo_context", ""),
+                signals=state.get("signals", ""),
             )
             update: dict = {"findings": findings, "usage": usage}
             if error is not None:

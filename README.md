@@ -134,6 +134,7 @@ accuracy:
   analyst_thinking: null      # null = provider default (DeepSeek = on); false/true to force
   reasoning_effort: ""        # "" | low | medium | high (depth when thinking is on)
   repo_context: false         # prefetch cross-file symbol definitions for context (Python/JS/TS/Go, opt-in, live-path)
+  structured_signals: false   # compact diff-derived <impact> card (removed guards + contract changes); promising frontier-push (F1 31→45 on a 1-run real-PR slice) but unconfirmed at scale — on in thorough (D46)
 min_severity: medium          # report at/above: critical|high|medium|low|nit
 ignore:                       # appended to the built-in skip list
   - "migrations/**"
@@ -270,7 +271,7 @@ PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
 PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**245 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**256 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
 
 ## On-demand commands
 

@@ -124,6 +124,12 @@ class AccuracyConfig(BaseModel):
     # opt-in, live-path (needs head-ref fetches). Off by default until a measured
     # win on the real-PR benchmark (more context can also hurt — D34/SWE-PRBench).
     repo_context: bool = False
+    # Compact structured signals (Lever A, D46): hand analysts a small `<impact>` card of
+    # FACTS derived from the diff — removed guards/checks and changed function signatures —
+    # the exact context-dependent miss classes (dropped workaround, typing regression,
+    # caller-contract). "Compression beats expansion": facts, not raw bodies (unlike
+    # repo_context). Diff-only, deterministic, $0, fail-open. Off until a measured win.
+    structured_signals: bool = False
 
 
 class AgentsConfig(BaseModel):
@@ -239,6 +245,7 @@ class SentinelConfig(BaseModel):
             self.accuracy.calibration = True
             self.accuracy.lenses = True
             self.accuracy.cot = "brief"
+            self.accuracy.structured_signals = True  # Lever A (D46): compact diff-derived facts
         # "balanced" / "" keep the defaults (samples=3, verifier on, research
         # levers off — measured ≈ baseline on flash, so off by default; D29).
 
