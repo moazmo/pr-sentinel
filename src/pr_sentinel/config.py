@@ -62,6 +62,12 @@ class AccuracyConfig(BaseModel):
     # The adjudication pass: one batched LLM call that confirms/rejects each
     # merged finding against the numbered diff before the reviewer writes prose.
     verifier: bool = True
+    # MAV (D44): number of diverse aspect-rubric verifier passes (1 = the classic
+    # single rubric). >1 runs that many angles (grounding/skeptic/impact/…) and
+    # rejects a finding only on a majority of rejects — recovers the catches a
+    # low min_support surfaces without the false-positive flood a single verifier
+    # lets through. Each extra pass is one more (cheap, cached-prefix) review call.
+    verifier_aspects: int = Field(default=1, ge=1, le=5)
     # Adaptive sampling (V2 P12): spend the first sample, and only draw the
     # remaining samples for chunks where that sample found something worth
     # re-checking. Saves ~40% of calls on clean code without losing the vote
@@ -220,7 +226,13 @@ class SentinelConfig(BaseModel):
             self.accuracy.cot = "off"
         elif self.mode == "thorough":
             self.accuracy.samples = 3
-            self.accuracy.min_support = 2
+            # min_support=1: keep every sample's findings and let the verifier filter,
+            # instead of pre-dropping singletons by vote. Measured (D45): on real PRs this
+            # is the single biggest recall lever — vote-then-verify discards real catches
+            # the verifier never sees (+~17pp recall / +12pp F1 same-subset) — at a precision
+            # cost (more false positives on clean code), which is why it's max-recall-only,
+            # not the FP-averse default. balanced/"" keep min_support=2.
+            self.accuracy.min_support = 1
             self.accuracy.verifier = True
             # Max-recall: turn on every research lever for users who want them.
             self.accuracy.debias = True

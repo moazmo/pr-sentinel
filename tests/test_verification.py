@@ -1,6 +1,10 @@
 """Evidence anchoring (V2 A2): the hallucination killer."""
 
+import asyncio
+
+from pr_sentinel.config import SentinelConfig
 from pr_sentinel.models import ChangedFile, Finding
+from pr_sentinel.provider import CompletionResult
 from pr_sentinel.verification import anchor_finding, anchor_findings
 
 PATCH = (
@@ -73,3 +77,49 @@ class TestAnchorFindings:
         files[0].skipped = True
         kept, dropped = anchor_findings([make_finding()], files)
         assert kept == [] and dropped == 1
+
+
+class _AspectProvider:
+    """One aspect pass (the GROUNDING rubric) rejects finding id 0; every other
+    pass confirms both — so any-reject MAV must drop finding 0 and keep finding 1."""
+
+    async def complete(self, system, user, *, max_tokens, temperature=0.1,
+                       model=None, json_mode=False, thinking=None, reasoning_effort=None):
+        if "GROUNDING" in user:
+            text = '{"verdicts":[{"id":0,"verdict":"reject"},{"id":1,"verdict":"confirm"}]}'
+        else:
+            text = '{"verdicts":[{"id":0,"verdict":"confirm"},{"id":1,"verdict":"confirm"}]}'
+        return CompletionResult(text=text, prompt_tokens=10, completion_tokens=5)
+
+
+class TestMAVVerifier:
+    """MAV (D45): multiple aspect passes, any-reject combine."""
+
+    def _setup(self, aspects: int):
+        from pr_sentinel.agents import run_verifier
+
+        files = [ChangedFile(path="api.py", status="modified", patch=PATCH)]
+        findings = [
+            make_finding(category="sql-injection"),
+            make_finding(category="other", line_start=4, line_end=4,
+                         evidence="rows = conn.execute(query).fetchall()"),
+        ]
+        cfg = SentinelConfig()
+        cfg.accuracy.verifier_aspects = aspects
+        kept, _usage, err = asyncio.run(
+            run_verifier(_AspectProvider(), "pr", findings, files, cfg)
+        )
+        return kept, err
+
+    def test_any_reject_drops_finding_refuted_by_one_aspect(self):
+        kept, err = self._setup(aspects=3)
+        assert err is None
+        cats = {f.category for f in kept}
+        assert "sql-injection" not in cats  # GROUNDING pass rejected id 0
+        assert "other" in cats              # id 1 confirmed by all → survives
+
+    def test_single_aspect_unchanged_keeps_both(self):
+        # aspects=1 runs only the base rubric (no GROUNDING pass) → nothing rejected.
+        kept, err = self._setup(aspects=1)
+        assert err is None
+        assert len(kept) == 2

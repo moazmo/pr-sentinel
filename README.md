@@ -102,7 +102,7 @@ Large PRs: files are fetched via the paginated files API (the only endpoint that
 Optional `.pr-sentinel.yml` at the repo root — zero config works out of the box. All fields and their defaults:
 
 ```yaml
-mode: ""                      # preset: fast | balanced | thorough (thorough = all research levers on, max-recall; measured ≈ baseline on flash — overrides the accuracy block)
+mode: ""                      # preset: fast | balanced | thorough. thorough = max-recall: min_support=1 (keep every sample's findings, let the verifier filter — measured +~17pp recall / +12pp F1 on real PRs, D45) + all research levers on, at a higher false-positive rate. overrides the accuracy block.
 provider:
   base_url: https://api.openai.com/v1     # any OpenAI-compatible endpoint
   model: gpt-5-mini
@@ -118,6 +118,7 @@ accuracy:
   samples: 3                  # self-consistency samples per analyst (1 disables the ensemble)
   min_support: 2              # a finding must appear in this many samples to survive the vote
   verifier: true              # run the adjudication pass before the reviewer
+  verifier_aspects: 1         # >1 = multi-angle (MAV) verification; a precision-recall dial (measured a slider, D45)
   adaptive: true              # spend extra samples only on chunks that found something
   cross_file: false           # opt-in extra pass for cross-file issues (1 more call)
   # Research levers (v2.5) — all opt-in, default off. Measured ≈ baseline on flash
@@ -269,7 +270,7 @@ PR_SENTINEL_API_KEY=sk-... PR_SENTINEL_BASE_URL=https://api.deepseek.com/v1 \
 PR_SENTINEL_MODEL=deepseek-v4-flash python evals/run.py --runs 3
 ```
 
-The unit/integration suite (**243 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
+The unit/integration suite (**245 tests**, LLM and GitHub API fully mocked, no network) runs in CI: `pytest`.
 
 ## On-demand commands
 

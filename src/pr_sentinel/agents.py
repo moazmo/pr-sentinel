@@ -456,6 +456,27 @@ def _excerpt_for(finding: Finding, line_map: dict[int, str], radius: int = 4) ->
     return "\n".join(lines)
 
 
+# MAV aspect rubrics (V2.7, D44): index 0 is the base rubric (verifier.md, byte-identical
+# in the cached system prefix); the rest are short USER-message directives that make each
+# pass adjudicate from a different angle. Self-consistency proved the vote discards real
+# catches (D44); scaling *verifiers* (not the vote) is what recovers them without the FP
+# flood — diverse verifiers beat one verifier queried K times (BoN-MAV / Weaver).
+_VERIFIER_ASPECTS: tuple[str, ...] = (
+    "",
+    "\n\n## This pass — GROUNDING\nAdjudicate ONLY on whether each finding's quoted evidence "
+    "line, as shown in its excerpt, literally does what the message claims. If the cited code "
+    "does not itself exhibit the problem, reject.",
+    "\n\n## This pass — SKEPTIC\nAssume every finding is a false positive raised by an "
+    "over-eager reviewer. Confirm a finding ONLY if the visible code makes the bug undeniable "
+    "on its own; reject borderline, speculative, single-sample, or style-level findings.",
+    "\n\n## This pass — IMPACT\nConfirm a finding only if the described problem would actually "
+    "cause incorrect behavior or a security/data issue as written; reject the cosmetic and the "
+    "merely-stylistic, and anything whose harm depends on code you cannot see.",
+    "\n\n## This pass — CONSISTENCY\nReject any finding whose reasoning has a visible logical "
+    "gap or whose severity does not match what the excerpt shows.",
+)
+
+
 async def run_verifier(
     provider: LLMProvider,
     pr_map: str,
@@ -463,9 +484,12 @@ async def run_verifier(
     files: list,
     config: SentinelConfig,
 ) -> tuple[list[Finding], UsageStats, AgentError | None]:
-    """One batched call that confirms/rejects/downgrades each finding against
-    the numbered diff. Fail-open: any failure returns the findings untouched —
-    a missing adjudication beats a missing review."""
+    """Adjudicate each finding against the numbered diff. `accuracy.verifier_aspects` (default 1)
+    runs that many diverse aspect-rubric passes (MAV, D44) and combines by vote: a finding is
+    rejected only if a MAJORITY of passes reject it — so the extra catches recovered by
+    min_support=1 survive iff they pass scrutiny from several angles, while singleton false
+    positives any one angle can refute get pruned. Fail-open: any failure returns findings
+    untouched — a missing adjudication beats a missing review."""
     from .diffmap import line_text_map  # local import keeps module deps one-way
 
     usage = UsageStats()
@@ -484,52 +508,66 @@ async def run_verifier(
             for i, f in enumerate(findings)
         },
     }
-    user = "<verification_input>\n" + json.dumps(payload, indent=1) + "\n</verification_input>"
-    verdicts = None
-    for attempt in range(1 + PARSE_RETRIES):
-        try:
-            result = await asyncio.wait_for(
-                provider.complete(
-                    load_prompt("verifier"),
-                    user,
-                    max_tokens=config.limits.max_output_tokens_per_agent,
-                    temperature=VERIFIER_TEMPERATURE,
-                    model=config.provider.resolved_review_model,
-                    json_mode=True,
-                ),
-                timeout=config.limits.agent_timeout_seconds,
-            )
-        except (ProviderError, asyncio.TimeoutError) as exc:
-            logger.warning("Verifier failed (%s); findings pass through unadjudicated.", exc)
-            return findings, usage, AgentError(agent="verifier", message=str(exc))
-        usage.add("verifier", result.prompt_tokens, result.completion_tokens,
-                  cached=result.cached_tokens)
-        verdicts = _parse_verifier_output(result.text)
-        if verdicts is None and attempt < PARSE_RETRIES:
-            logger.warning("Verifier output unparseable; re-asking once.")
-            continue
-        break
+    base_user = "<verification_input>\n" + json.dumps(payload, indent=1) + "\n</verification_input>"
+    system = load_prompt("verifier")
 
-    if verdicts is None:
-        logger.warning("Verifier output unparseable; findings pass through unadjudicated.")
+    async def one_pass(directive: str) -> dict[int, tuple[str, Severity | None]] | None:
+        user = base_user + directive
+        for attempt in range(1 + PARSE_RETRIES):
+            try:
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        system, user,
+                        max_tokens=config.limits.max_output_tokens_per_agent,
+                        temperature=VERIFIER_TEMPERATURE,
+                        model=config.provider.resolved_review_model,
+                        json_mode=True,
+                    ),
+                    timeout=config.limits.agent_timeout_seconds,
+                )
+            except (ProviderError, asyncio.TimeoutError) as exc:
+                logger.warning("Verifier pass failed: %s", exc)
+                return None
+            usage.add("verifier", result.prompt_tokens, result.completion_tokens,
+                      cached=result.cached_tokens)
+            parsed = _parse_verifier_output(result.text)
+            if parsed is None and attempt < PARSE_RETRIES:
+                logger.warning("Verifier output unparseable; re-asking once.")
+                continue
+            return parsed
+        return None
+
+    n_aspects = max(1, min(config.accuracy.verifier_aspects, len(_VERIFIER_ASPECTS)))
+    passes = await asyncio.gather(*(one_pass(_VERIFIER_ASPECTS[k]) for k in range(n_aspects)))
+    passes = [p for p in passes if p is not None]
+
+    if not passes:
+        logger.warning("Verifier produced no usable pass; findings pass through unadjudicated.")
         return findings, usage, AgentError(
             agent="verifier", message="output did not match the expected schema"
         )
 
+    # Combine by ANY-reject across the aspect passes (precision-oriented — the whole point
+    # of diverse rubrics is more chances to catch a false positive; majority-reject proved
+    # too lenient, keeping FPs, D44). A pass that omits an id is a tacit confirm. A finding
+    # survives only if NO aspect refutes it; high/critical that any pass rejects still go.
     kept: list[Finding] = []
     rejected = 0
     for i, finding in enumerate(findings):
-        verdict, severity = verdicts.get(i, ("confirm", None))
-        if verdict == "reject":
+        verdicts = [p.get(i, ("confirm", None)) for p in passes]
+        if any(v == "reject" for v, _ in verdicts):
             rejected += 1
-            logger.info("Verifier rejected %s finding at %s:%d.",
+            logger.info("Verifier (MAV) rejected %s finding at %s:%d (an aspect refuted it).",
                         finding.agent.value, finding.file, finding.line_start)
             continue
-        if verdict == "downgrade" and severity is not None:
-            finding = finding.model_copy(update={"severity": severity})
+        # Downgrade if any pass asked to; apply the least-severe proposed severity.
+        downs = [s for v, s in verdicts if v == "downgrade" and s is not None]
+        if downs:
+            finding = finding.model_copy(update={"severity": max(downs, key=lambda s: s.rank)})
         kept.append(finding)
     if rejected:
-        logger.info("Verifier rejected %d of %d findings.", rejected, len(findings))
+        logger.info("Verifier rejected %d of %d findings across %d aspect pass(es).",
+                    rejected, len(findings), len(passes))
     return kept, usage, None
 
 

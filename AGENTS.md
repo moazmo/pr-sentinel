@@ -6,7 +6,7 @@ PR Sentinel is a multi-agent code-review GitHub Action: five LLM agents (Archite
 
 ```bash
 pip install -e ".[dev]"        # setup (use a venv)
-pytest                         # 243 tests — LLM and GitHub API fully mocked, no network, no key
+pytest                         # 245 tests — LLM and GitHub API fully mocked, no network, no key
 ruff check src tests evals     # lint (line length 100)
 python evals/run.py --runs 3 --label flash-v2   # evals — REAL LLM; needs PR_SENTINEL_API_KEY
                                # env knobs: PR_SENTINEL_{BASE_URL,MODEL,SAMPLES,VERIFIER,
@@ -36,7 +36,7 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 | `src/pr_sentinel/security.py` | Prompt sanitizer + output secret scrubbing |
 | `src/pr_sentinel/config.py` | `.pr-sentinel.yml` (Pydantic, defaults-first, parsed from the BASE branch); accuracy/output blocks |
 | `src/pr_sentinel/main.py` | Action entrypoint — every path exits 0; `@pr-sentinel` command dispatch (author-association gated) |
-| `tests/` | 243 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config; `test_research_levers.py` pins the v2.5 lever wiring. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
+| `tests/` | 245 tests; `conftest.py` has MockProvider / SequenceProvider / FailingProvider / single_sample_config; `test_research_levers.py` pins the v2.5 lever wiring. Close any pooled httpx client you set in a test (`await x.aclose()`) — leaks surface as teardown OSError on Python 3.14 |
 | `evals/` | 37 fixtures (7 languages, hard negatives, 2 injection vectors, misleading-title `mt_*` debias probes); `run.py` env-driven leaderboard runner (per-lever knobs, fail-fast timeouts, durable `_matrix.log`) |
 
 ## Invariants — never break these
@@ -61,6 +61,7 @@ On Windows, set `PYTHONUTF8=1` before running evals (emoji output).
 18. **Reasoning is a parameter, on by default, and essential (D36).** DeepSeek V4 flash runs thinking-on by default; disabling it tanks accuracy (~91%→61%, measured). Keep `analyst_thinking` default `None` (don't send the field — endpoint-safe; non-DeepSeek endpoints would 400 on an unknown `thinking` key). Temperature is inert while thinking is on, so the ensemble's only real diversity source then is the prompt lenses, not temperature.
 19. **SAST is opt-in and the rule corpus is the value (D35).** `sast.py` shells out to Semgrep; never reimplement its rules. Hits are kept only on added lines and go through anchoring + the verifier like any finding. Semgrep isn't in the slim default image — enabling `sast.enabled` needs it in the runner. **Measured 2026-06-17 (D39): precision-safe (the verifier kills its FPs, 3/3) but 0 net recall on our benchmarks → stays opt-in/off, no image variant shipped. Default ruleset is `p/default`, not `auto` (auto refuses with telemetry off + phones home). Reproduce with `evals/sast_probe.py`.** Don't ship a SAST image until a user need or a measured gain appears.
 20. **Don't re-add the agentic tool-loop for the cheap model (D38 + D40).** Measured twice — naive whole-file loop (1/10) and a proper RepoAudit-style def-only loop with `reasoning_effort=high` (3/10) — both LOST to diff-only (5/10) on `deepseek-v4-flash`: attention dilution, intrinsic to giving the cheap model tools. `evals/agentic_probe{,2}.py` keep it reproducible. The recall unlock belongs to a stronger model (premium tier), not the BYOK hot path. Diff-only focus + the deterministic `repo_context` prefetch are the approach.
+21. **The ensemble vote trades recall for precision; `min_support=1` is the recall dial (D45).** Measured on real PRs: the default `min_support=2` discards real catches the verifier never sees (vote-then-verify); `min_support=1` (keep all, verifier filters) = +~17pp recall / +12pp F1 at a higher FP rate. So `min_support=1` ships in `mode: thorough` (max-recall), NOT as the FP-averse default. MAV (`verifier_aspects>1`) is a precision-recall slider (any-reject = precision mode, doesn't dominate single-verifier on F1) — opt-in, default 1. Verifier strength can't push the frontier out (imperfect-verifier FP floor); only better information (compact structured context) or capability (distillation) can — those are the next builds, per `docs/RESEARCH_SYNTHESIS_2026-06-18.md`.
 
 ## Conventions
 

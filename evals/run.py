@@ -95,6 +95,8 @@ def config_from_env() -> SentinelConfig:
     config.provider.base_url = os.environ.get("PR_SENTINEL_BASE_URL", config.provider.base_url)
     config.accuracy.samples = int(os.environ.get("PR_SENTINEL_SAMPLES", "3"))
     config.accuracy.verifier = os.environ.get("PR_SENTINEL_VERIFIER", "true").lower() != "false"
+    config.accuracy.verifier_aspects = int(
+        os.environ.get("PR_SENTINEL_VERIFIER_ASPECTS", config.accuracy.verifier_aspects))
     if config.accuracy.samples == 1:
         config.accuracy.min_support = 1
     config.provider.analyst_model = os.environ.get("PR_SENTINEL_ANALYST_MODEL") or None
